@@ -1,21 +1,35 @@
-import express from "express";
-import { bootstrap } from "./src/app.controller.js";
-import dotenv from "dotenv";
+// import express from "express";
+// import { bootstrap } from "./src/app.controller.js";
 
-dotenv.config();
 
-const app = express();
-app.use(express.json());
+// const app = express();
+// app.use(express.json());
+
+// app.get("/", (req, res) => {
+  //   res.json({ success: true, message: "Elfishawy Cafe API is running ☕🚀" });
+// });
+
+// await bootstrap(app, express);
+
+// const PORT = process.env.PORT || 3000;
+// app.listen(PORT, () => {
+  //   console.log(`Server is running on port ${PORT} ✅`);
+  // });
+  
+  // export default app;
+  import express from "express";
+  import dotenv from "dotenv";
+  import { bootstrap } from "./src/app.controller.js";
+  dotenv.config();
+
+  const app = express();
+  app.use(express.json());
 
 app.get("/", (req, res) => {
-  res.json({ success: true, message: "Elfishawy Cafe API is running ☕🚀" });
+  res.json({ message: "API is running 🚀" });
 });
 
 await bootstrap(app, express);
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT} ✅`);
-});
-
 export default app;
+
