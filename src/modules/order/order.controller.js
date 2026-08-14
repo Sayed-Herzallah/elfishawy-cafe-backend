@@ -36,7 +36,7 @@ router.get(
 router.patch(
   "/:id/status",
   authAction,
-  authorization([roles.admin, roles.manager]),
+  authorization([roles.admin]),
   validation(orderValidation.updateOrderStatusSchema),
   asyncHandler(orderService.updateOrderStatus)
 );

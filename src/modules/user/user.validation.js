@@ -35,7 +35,7 @@ export const createUserSchema = joi.object({
       "any.required": "Phone is required",
     }),
   address: joi.string().max(100).optional(),
-  roleType: joi.string().valid("admin", "manager", "cashier").required(),
+  roleType: joi.string().valid("admin", "cashier").required(),
 }).required();
 
 export const updateProfileSchema = joi.object({

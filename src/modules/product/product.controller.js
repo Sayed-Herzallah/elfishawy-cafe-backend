@@ -14,7 +14,7 @@ const router = Router();
 router.post(
   "/",
   authAction,
-  authorization([roles.admin, roles.manager]),
+  authorization([roles.admin]),
   uploadFile().single("image"),
   validation(productValidation.createProductSchema),
   asyncHandler(productService.createProduct)
@@ -39,7 +39,7 @@ router.get(
 router.put(
   "/:id",
   authAction,
-  authorization([roles.admin, roles.manager]),
+  authorization([roles.admin]),
   uploadFile().single("image"),
   validation(productValidation.updateProductSchema),
   asyncHandler(productService.updateProduct) // Wait, let's make sure it calls productService.updateProduct
@@ -49,7 +49,7 @@ router.put(
 router.delete(
   "/:id",
   authAction,
-  authorization([roles.admin, roles.manager]),
+  authorization([roles.admin]),
   validation(productValidation.deleteProductSchema),
   asyncHandler(productService.deleteProduct)
 );

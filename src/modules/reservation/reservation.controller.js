@@ -20,7 +20,7 @@ router.post(
 router.get(
   "/",
   authAction,
-  authorization([roles.admin, roles.manager, roles.cashier]),
+  authorization([roles.admin, roles.cashier]),
   asyncHandler(reservationService.listReservations)
 );
 
@@ -28,7 +28,7 @@ router.get(
 router.patch(
   "/:id/status",
   authAction,
-  authorization([roles.admin, roles.manager, roles.cashier]),
+  authorization([roles.admin, roles.cashier]),
   validation(reservationValidation.updateReservationStatusSchema),
   asyncHandler(reservationService.updateReservationStatus)
 );

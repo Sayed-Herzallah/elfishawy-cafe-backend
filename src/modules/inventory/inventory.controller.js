@@ -9,8 +9,8 @@ import { roles } from "../../database/model/user.model.js";
 
 const router = Router();
 
-// Set protections for all routes under inventory (restricted to Admin/Manager)
-router.use(authAction, authorization([roles.admin, roles.manager]));
+// Set protections for all routes under inventory (restricted to Admin)
+router.use(authAction, authorization([roles.admin]));
 
 // ===================== Create Item =====================
 router.post(

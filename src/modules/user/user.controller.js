@@ -9,20 +9,20 @@ import { roles } from "../../database/model/user.model.js";
 
 const router = Router();
 
-// ===================== Create Staff (Admin/Manager) =====================
+// ===================== Create Staff (Admin) =====================
 router.post(
   "/",
   authAction,
-  authorization([roles.admin, roles.manager]),
+  authorization([roles.admin]),
   validation(userValidation.createUserSchema),
   asyncHandler(userService.createStaff)
 );
 
-// ===================== Get Staff List (Admin/Manager) =====================
+// ===================== Get Staff List (Admin) =====================
 router.get(
   "/",
   authAction,
-  authorization([roles.admin, roles.manager]),
+  authorization([roles.admin]),
   asyncHandler(userService.listStaff)
 );
 
