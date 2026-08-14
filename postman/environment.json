@@ -1,0 +1,67 @@
+{
+  "id": "elfishawy-cafe-api-environment",
+  "name": "Elfishawy Cafe Environment",
+  "values": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "any",
+      "enabled": true
+    },
+    {
+      "key": "refreshToken",
+      "value": "",
+      "type": "any",
+      "enabled": true
+    },
+    {
+      "key": "productId",
+      "value": "",
+      "type": "any",
+      "enabled": true
+    },
+    {
+      "key": "categoryId",
+      "value": "",
+      "type": "any",
+      "enabled": true
+    },
+    {
+      "key": "orderId",
+      "value": "",
+      "type": "any",
+      "enabled": true
+    },
+    {
+      "key": "inventoryItemId",
+      "value": "",
+      "type": "any",
+      "enabled": true
+    },
+    {
+      "key": "expenseId",
+      "value": "",
+      "type": "any",
+      "enabled": true
+    },
+    {
+      "key": "reservationId",
+      "value": "",
+      "type": "any",
+      "enabled": true
+    },
+    {
+      "key": "staffId",
+      "value": "",
+      "type": "any",
+      "enabled": true
+    }
+  ],
+  "_postman_variable_scope": "environment"
+}
