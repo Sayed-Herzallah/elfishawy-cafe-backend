@@ -36,13 +36,13 @@ router.get(
 );
 
 // ===================== Update Product =====================
-router.put(
+router.patch(
   "/:id",
   authAction,
   authorization([roles.admin]),
   uploadFile().single("image"),
   validation(productValidation.updateProductSchema),
-  asyncHandler(productService.updateProduct) // Wait, let's make sure it calls productService.updateProduct
+  asyncHandler(productService.updateProduct)
 );
 
 // ===================== Delete Product =====================

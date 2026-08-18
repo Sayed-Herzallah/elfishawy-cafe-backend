@@ -26,7 +26,7 @@ router.get(
 );
 
 // ===================== Update Category =====================
-router.put(
+router.patch(
   "/:id",
   authAction,
   authorization([roles.admin]),

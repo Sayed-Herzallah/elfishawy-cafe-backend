@@ -34,7 +34,7 @@ router.get(
 );
 
 // ===================== Update Profile (Me) =====================
-router.put(
+router.patch(
   "/me",
   authAction,
   validation(userValidation.updateProfileSchema),
