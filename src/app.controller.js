@@ -19,7 +19,6 @@ import productRouter from "./modules/product/product.controller.js";
 import orderRouter from "./modules/order/order.controller.js";
 import inventoryRouter from "./modules/inventory/inventory.controller.js";
 import expenseRouter from "./modules/expense/expense.controller.js";
-import reservationRouter from "./modules/reservation/reservation.controller.js";
 import analyticsRouter from "./modules/analytics/analytics.controller.js";
 import recipeRouter from "./modules/recipe/recipe.controller.js";
 
@@ -115,7 +114,6 @@ export const bootstrap = async (app, express) => {
   app.use("/orders", orderRouter);
   app.use("/inventory", inventoryRouter);
   app.use("/expenses", expenseRouter);
-  app.use("/reservations", reservationRouter);
   app.use("/analytics", analyticsRouter);
   app.use("/recipes", recipeRouter);
 

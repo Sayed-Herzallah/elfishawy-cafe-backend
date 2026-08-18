@@ -1,7 +1,6 @@
 import { orderModel, orderStatuses } from "../../database/model/order.model.js";
 import { expenseModel } from "../../database/model/expense.model.js";
 import { inventoryModel } from "../../database/model/inventory.model.js";
-import { reservationModel, reservationStatuses } from "../../database/model/reservation.model.js";
 
 // =========================== 1) Get KPIs / Stats ===========================
 export const getStats = async (req, res, next) => {
@@ -30,11 +29,6 @@ export const getStats = async (req, res, next) => {
       $expr: { $lte: ["$quantity", "$minLimit"] },
     });
 
-    // 6. Active Reservations Count (pending or confirmed)
-    const activeReservationsCount = await reservationModel.countDocuments({
-      status: { $in: [reservationStatuses.pending, reservationStatuses.confirmed] },
-    });
-
     return res.status(200).json({
       success: true,
       message: "KPI stats retrieved successfully",
@@ -44,7 +38,6 @@ export const getStats = async (req, res, next) => {
         totalExpenses,
         netProfit,
         lowStockCount,
-        activeReservationsCount,
       },
     });
   } catch (err) {
