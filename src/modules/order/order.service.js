@@ -1,6 +1,20 @@
 import { orderModel, orderStatuses } from "../../database/model/order.model.js";
 import { productModel } from "../../database/model/product.model.js";
+import { inventoryModel } from "../../database/model/inventory.model.js";
+import { recipeModel } from "../../database/model/recipe.model.js";
+import { consumptionPerUnit, convertToBase } from "../../utils/recipe/unitConverter.js";
 import { customAlphabet } from "nanoid";
+
+// Convert a base-unit quantity back to a stored unit quantity
+const baseToUnit = (baseQty, unit) => {
+  const u = unit.toUpperCase();
+  if (u === "KG") return baseQty / 1000;
+  if (u === "GRAM") return baseQty;
+  if (u === "LITER") return baseQty / 1000;
+  if (u === "ML") return baseQty;
+  if (u === "PIECE") return baseQty;
+  return baseQty; // fallback
+};
 
 // =========================== 1) Create Order ===========================
 export const createOrder = async (req, res, next) => {
@@ -9,9 +23,11 @@ export const createOrder = async (req, res, next) => {
 
   let calculatedTotal = 0;
   const processedItems = [];
-  const stockRollbacks = []; // To track changes for rolling back in case of error
+  const productStockChanges = [];
+  const inventoryDeductions = [];
 
   try {
+    // ===== PHASE 1: Validate products & accumulate product stock changes =====
     for (const item of items) {
       const product = await productModel.findById(item.product);
       if (!product) {
@@ -19,31 +35,85 @@ export const createOrder = async (req, res, next) => {
       }
 
       if (!product.inStock || product.stockQuantity < item.quantity) {
-        return next(new Error(`Insufficient stock for product "${product.name}". Available: ${product.stockQuantity}`, { cause: 400 }));
+        return next(new Error(
+          `Insufficient stock for product "${product.name}". Available: ${product.stockQuantity}`,
+          { cause: 400 }
+        ));
       }
 
-      // Add to total
       calculatedTotal += product.price * item.quantity;
-
       processedItems.push({
         product: product._id,
         quantity: item.quantity,
-        price: product.price, // capture current price
+        price: product.price,
       });
-
-      // Track stock changes
-      stockRollbacks.push({
+      productStockChanges.push({
         productId: product._id,
         newQuantity: product.stockQuantity - item.quantity,
       });
     }
 
-    // Generate unique order number (EFC + YYMMDD + 4 digits)
+    // ===== PHASE 2: Check Recipe-based Inventory availability =====
+    for (const item of processedItems) {
+      const recipe = await recipeModel.findOne({
+        product: item.product,
+        isActive: true,
+      }).populate("ingredients.inventoryItem");
+
+      if (!recipe) continue;
+
+      for (const ing of recipe.ingredients) {
+        const invItem = ing.inventoryItem;
+        if (!invItem) {
+          return next(new Error(`Ingredient inventory item not found in recipe for product ${item.product}`, { cause: 404 }));
+        }
+        const cpu = consumptionPerUnit(ing.inputQuantity, ing.inputUnit, ing.outputQuantity);
+        const totalConsumptionBase = cpu * item.quantity;
+        const currentStockBase = convertToBase(invItem.quantity, invItem.unit);
+
+        if (currentStockBase < totalConsumptionBase) {
+          const canMake = Math.floor(currentStockBase / cpu);
+          return next(new Error(
+            `Insufficient inventory for "${invItem.name}". Available quantity: ${canMake} cups.`,
+            { cause: 400 }
+          ));
+        }
+
+        // Accumulate deductions — merge same ingredient across products
+        const existing = inventoryDeductions.find(
+          (d) => d.inventoryId.toString() === invItem._id.toString()
+        );
+        if (existing) {
+          existing.consumptionBase += totalConsumptionBase;
+        } else {
+          inventoryDeductions.push({
+            inventoryId: invItem._id,
+            currentQuantity: invItem.quantity,
+            currentUnit: invItem.unit,
+            consumptionBase: totalConsumptionBase,
+          });
+        }
+      }
+    }
+
+    // Re-validate merged deductions for shared ingredients
+    for (const ded of inventoryDeductions) {
+      const currentStockBase = convertToBase(ded.currentQuantity, ded.currentUnit);
+      if (currentStockBase < ded.consumptionBase) {
+        const invItem = await inventoryModel.findById(ded.inventoryId);
+        return next(new Error(
+          `Insufficient combined inventory for "${invItem?.name}". Cannot fulfil total order.`,
+          { cause: 400 }
+        ));
+      }
+    }
+
+    // ===== PHASE 3: Generate Order Number =====
     const dateStr = new Date().toISOString().slice(2, 10).replace(/-/g, "");
     const randomDigits = customAlphabet("0123456789", 4)();
     const orderNumber = `EFC-${dateStr}-${randomDigits}`;
 
-    // Create Order
+    // ===== PHASE 4: Create Order =====
     const newOrder = await orderModel.create({
       orderNumber,
       items: processedItems,
@@ -52,14 +122,28 @@ export const createOrder = async (req, res, next) => {
       orderType,
       tableNumber,
       cashierId,
-      status: orderStatuses.completed, // Default POS orders to completed immediately
+      status: orderStatuses.completed,
     });
 
-    // Update stocks in DB
-    for (const stock of stockRollbacks) {
+    // ===== PHASE 5: Deduct product.stockQuantity =====
+    for (const stock of productStockChanges) {
       await productModel.findByIdAndUpdate(stock.productId, {
         stockQuantity: stock.newQuantity,
         inStock: stock.newQuantity > 0,
+      });
+    }
+
+    // ===== PHASE 6: Deduct Inventory (Recipe-based) =====
+    for (const ded of inventoryDeductions) {
+      const invItem = await inventoryModel.findById(ded.inventoryId);
+      if (!invItem) continue;
+
+      const currentStockBase = convertToBase(invItem.quantity, invItem.unit);
+      const newStockBase = Math.max(0, currentStockBase - ded.consumptionBase);
+      const newQuantityInUnit = baseToUnit(newStockBase, invItem.unit);
+
+      await inventoryModel.findByIdAndUpdate(ded.inventoryId, {
+        quantity: newQuantityInUnit,
       });
     }
 
@@ -81,7 +165,6 @@ export const createOrder = async (req, res, next) => {
 // =========================== 2) Get Orders ===========================
 export const getOrders = async (req, res, next) => {
   const { status, orderType, searchDate, cashierId } = req.query;
-
   const filter = {};
 
   if (status) filter.status = status;
@@ -134,18 +217,42 @@ export const updateOrderStatus = async (req, res, next) => {
   const order = await orderModel.findById(id);
   if (!order) return next(new Error("Order not found", { cause: 404 }));
 
-  // If order is already cancelled, prevent status changes
   if (order.status === orderStatuses.cancelled) {
     return next(new Error("Cannot change status of a cancelled order", { cause: 400 }));
   }
 
-  // If order is being cancelled, restore stock!
   if (status === orderStatuses.cancelled && order.status !== orderStatuses.cancelled) {
+    // Restore product stock
     for (const item of order.items) {
       await productModel.findByIdAndUpdate(item.product, {
         $inc: { stockQuantity: item.quantity },
         $set: { inStock: true },
       });
+    }
+
+    // Restore inventory (recipe-based)
+    for (const item of order.items) {
+      const recipe = await recipeModel.findOne({
+        product: item.product,
+        isActive: true,
+      });
+      if (!recipe) continue;
+
+      for (const ing of recipe.ingredients) {
+        const cpu = consumptionPerUnit(ing.inputQuantity, ing.inputUnit, ing.outputQuantity);
+        const totalConsumptionBase = cpu * item.quantity;
+
+        const invItem = await inventoryModel.findById(ing.inventoryItem);
+        if (!invItem) continue;
+
+        const currentStockBase = convertToBase(invItem.quantity, invItem.unit);
+        const restoredBase = currentStockBase + totalConsumptionBase;
+        const restoredQty = baseToUnit(restoredBase, invItem.unit);
+
+        await inventoryModel.findByIdAndUpdate(ing.inventoryItem, {
+          quantity: restoredQty,
+        });
+      }
     }
   }
 

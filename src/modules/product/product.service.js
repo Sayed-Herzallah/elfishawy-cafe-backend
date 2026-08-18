@@ -1,5 +1,7 @@
 import { productModel } from "../../database/model/product.model.js";
 import { categoryModel } from "../../database/model/category.model.js";
+import { recipeModel } from "../../database/model/recipe.model.js";
+import { consumptionPerUnit, convertToBase } from "../../utils/recipe/unitConverter.js";
 import cloudinary from "../../utils/uploadfile/cloudinary.js";
 
 // Helper to upload file buffer to Cloudinary
@@ -14,6 +16,25 @@ const uploadToCloudinary = (fileBuffer, folder = "elfishawy/products") => {
     );
     stream.end(fileBuffer);
   });
+};
+
+// Calculate available product quantity based on recipe and current inventory
+const calcAvailableByRecipe = async (productId) => {
+  const recipe = await recipeModel.findOne({ product: productId, isActive: true })
+    .populate("ingredients.inventoryItem", "quantity unit");
+
+  if (!recipe || recipe.ingredients.length === 0) return null;
+
+  let minAvailable = Infinity;
+  for (const ing of recipe.ingredients) {
+    if (!ing.inventoryItem) continue;
+    const cpu = consumptionPerUnit(ing.inputQuantity, ing.inputUnit, ing.outputQuantity);
+    const stockBase = convertToBase(ing.inventoryItem.quantity, ing.inventoryItem.unit);
+    const canMake = cpu > 0 ? Math.floor(stockBase / cpu) : Infinity;
+    if (canMake < minAvailable) minAvailable = canMake;
+  }
+
+  return minAvailable === Infinity ? 0 : minAvailable;
 };
 
 // =========================== 1) Create Product ===========================
@@ -79,10 +100,20 @@ export const listProducts = async (req, res, next) => {
     .populate("category")
     .lean();
 
+  const enriched = await Promise.all(
+    data.map(async (p) => {
+      const availableQuantityByRecipe = await calcAvailableByRecipe(p._id);
+      return {
+        ...p,
+        availableQuantityByRecipe,
+      };
+    })
+  );
+
   return res.status(200).json({
     success: true,
     message: "Products list retrieved successfully",
-    data,
+    data: enriched,
   });
 };
 
@@ -93,10 +124,15 @@ export const getProduct = async (req, res, next) => {
   const product = await productModel.findById(id).populate("category");
   if (!product) return next(new Error("Product not found", { cause: 404 }));
 
+  const availableQuantityByRecipe = await calcAvailableByRecipe(product._id);
+
   return res.status(200).json({
     success: true,
     message: "Product retrieved successfully",
-    data: product,
+    data: {
+      ...product.toObject(),
+      availableQuantityByRecipe,
+    },
   });
 };
 

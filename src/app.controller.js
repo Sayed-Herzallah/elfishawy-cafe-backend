@@ -21,6 +21,7 @@ import inventoryRouter from "./modules/inventory/inventory.controller.js";
 import expenseRouter from "./modules/expense/expense.controller.js";
 import reservationRouter from "./modules/reservation/reservation.controller.js";
 import analyticsRouter from "./modules/analytics/analytics.controller.js";
+import recipeRouter from "./modules/recipe/recipe.controller.js";
 
 // ===================== Validate Env & Initialize Users =====================
 const initializeDefaultAccounts = async () => {
@@ -116,6 +117,7 @@ export const bootstrap = async (app, express) => {
   app.use("/expenses", expenseRouter);
   app.use("/reservations", reservationRouter);
   app.use("/analytics", analyticsRouter);
+  app.use("/recipes", recipeRouter);
 
   // ===================== Error Handlers =====================
   app.use(notFoundHandler);
