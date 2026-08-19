@@ -1,10 +1,22 @@
 import { expenseModel } from "../../database/model/expense.model.js";
 import { inventoryModel } from "../../database/model/inventory.model.js";
+import { roles } from "../../database/model/user.model.js";
 
 // =========================== 1) Create Expense ===========================
 export const createExpense = async (req, res, next) => {
   const { description, amount, category, inventoryItemLinked, inventoryQuantityAdded, date } = req.body;
   const addedBy = req.user._id;
+
+  // Anti-theft rule: a cashier may only log "inventory" expenses (e.g. buying
+  // supplies on the spot). Categories like "salaries" or "rent" are business
+  // financials that stay admin-only — a cashier has no legitimate reason to
+  // create them, and allowing it would let them fabricate/inflate costs.
+  if (req.user.roleType === roles.cashier && category !== "inventory") {
+    return next(new Error(
+      "Cashiers can only log inventory-related expenses",
+      { cause: 403 }
+    ));
+  }
 
   try {
     if (category === "inventory") {
@@ -50,6 +62,13 @@ export const listExpenses = async (req, res, next) => {
 
   if (category) {
     filter.category = category;
+  }
+
+  // Anti-theft rule: cashiers can only ever see the expenses THEY logged.
+  // Only admins can see the full expense list — that total cost data is
+  // exactly what would let someone reverse-engineer the shop's profit.
+  if (req.user.roleType === roles.cashier) {
+    filter.addedBy = req.user._id;
   }
 
   if (searchDate) {

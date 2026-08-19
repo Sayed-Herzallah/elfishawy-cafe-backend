@@ -39,6 +39,7 @@ export const listInventory = async (req, res, next) => {
 
   const data = await inventoryModel.find(filter)
     .sort({ createdAt: -1 })
+    .populate("lastRestockedBy", "userName roleType")
     .lean();
 
   return res.status(200).json({
@@ -58,12 +59,17 @@ export const restockItem = async (req, res, next) => {
 
   item.quantity += Number(quantity);
   item.lastRestocked = new Date();
+  item.lastRestockedBy = req.user._id; // audit trail: who added this stock
   await item.save();
+
+  const populatedItem = await inventoryModel
+    .findById(item._id)
+    .populate("lastRestockedBy", "userName roleType");
 
   return res.status(200).json({
     success: true,
     message: "Inventory item restocked successfully",
-    data: item,
+    data: populatedItem,
   });
 };
 

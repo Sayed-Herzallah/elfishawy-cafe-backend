@@ -31,6 +31,11 @@ const inventorySchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
+    lastRestockedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User_Data",
+      default: null,
+    },
   },
   {
     timestamps: true,
