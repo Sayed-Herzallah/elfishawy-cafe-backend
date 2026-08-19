@@ -1,0 +1,11 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap');
+@import 'tailwindcss';
+
+:root { font-family: 'IBM Plex Sans Arabic', sans-serif; color: #171717; background: #f8f7f2; font-synthesis: none; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; background: #f8f7f2; }
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+.display { font-family: 'Playfair Display', 'IBM Plex Sans Arabic', serif; }
+.fade-in { animation: fade .35s ease both; }
+@keyframes fade { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: translateY(0) } }
