@@ -41,4 +41,13 @@ router.patch(
   asyncHandler(orderService.updateOrderStatus)
 );
 
+// ===================== Update Order (Admin only) =====================
+router.patch(
+  "/:id",
+  authAction,
+  authorization([roles.admin]),
+  validation(orderValidation.updateOrderSchema),
+  asyncHandler(orderService.updateOrder)
+);
+
 export default router;

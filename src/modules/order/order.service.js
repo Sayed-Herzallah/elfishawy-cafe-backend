@@ -557,3 +557,202 @@ export const updateOrderStatus = async (req, res, next) => {
     data: updatedOrder,
   });
 };
+
+// =========================== 5) Update Order ===========================
+export const updateOrder = async (req, res, next) => {
+  const { id } = req.params;
+  const { items, paymentMethod, orderType, tableNumber } = req.body;
+
+  try {
+    const order = await orderModel.findById(id);
+    if (!order) return next(new Error("Order not found", { cause: 404 }));
+
+    if (order.status === orderStatuses.cancelled) {
+      return next(new Error("Cannot edit a cancelled order", { cause: 400 }));
+    }
+
+    // PHASE 1: Rollback current order's product stock and inventory levels
+    for (const item of order.items) {
+      await productModel.findByIdAndUpdate(item.product, {
+        $inc: { stockQuantity: item.quantity },
+        $set: { inStock: true },
+      });
+
+      const recipe = await recipeModel.findOne({ product: item.product, isActive: true });
+      if (recipe) {
+        for (const ing of recipe.ingredients) {
+          const cpu = consumptionPerUnit(ing.inputQuantity, ing.inputUnit, ing.outputQuantity);
+          const totalConsumptionBase = cpu * item.quantity;
+          const invItem = await inventoryModel.findById(ing.inventoryItem);
+          if (invItem) {
+            const currentStockBase = convertToBase(invItem.quantity, invItem.unit);
+            const restoredBase = currentStockBase + totalConsumptionBase;
+            const restoredQty = baseToUnit(restoredBase, invItem.unit);
+            await inventoryModel.findByIdAndUpdate(ing.inventoryItem, { quantity: restoredQty });
+          }
+        }
+      }
+    }
+
+    // If no new items are passed, we keep the previous items but validate on the restored quantities
+    const finalItems = items || order.items;
+
+    // PHASE 2: Validate new items against restored quantities
+    let calculatedTotal = 0;
+    const processedItems = [];
+    const productStockChanges = [];
+    const inventoryDeductions = [];
+
+    for (const item of finalItems) {
+      const product = await productModel.findById(item.product);
+      if (!product) {
+        await restoreOrderQuantities(order);
+        return next(new Error(`Product with ID ${item.product} not found`, { cause: 404 }));
+      }
+
+      if (product.stockQuantity < item.quantity) {
+        await restoreOrderQuantities(order);
+        return next(new Error(
+          `Insufficient stock for product "${product.name}". Available: ${product.stockQuantity}`,
+          { cause: 400 }
+        ));
+      }
+
+      calculatedTotal += product.price * item.quantity;
+      processedItems.push({
+        product: product._id,
+        quantity: item.quantity,
+        price: product.price,
+      });
+      productStockChanges.push({
+        productId: product._id,
+        newQuantity: product.stockQuantity - item.quantity,
+      });
+    }
+
+    // Validate Recipe-based Inventory availability for new items
+    for (const item of processedItems) {
+      const recipe = await recipeModel.findOne({
+        product: item.product,
+        isActive: true,
+      }).populate("ingredients.inventoryItem");
+
+      if (!recipe) continue;
+
+      for (const ing of recipe.ingredients) {
+        const invItem = ing.inventoryItem;
+        if (!invItem) {
+          await restoreOrderQuantities(order);
+          return next(new Error(`Ingredient inventory item not found in recipe for product ${item.product}`, { cause: 404 }));
+        }
+        const cpu = consumptionPerUnit(ing.inputQuantity, ing.inputUnit, ing.outputQuantity);
+        const totalConsumptionBase = cpu * item.quantity;
+        const currentStockBase = convertToBase(invItem.quantity, invItem.unit);
+
+        if (currentStockBase < totalConsumptionBase) {
+          await restoreOrderQuantities(order);
+          const canMake = Math.floor(currentStockBase / cpu);
+          return next(new Error(
+            `Insufficient inventory for "${invItem.name}". Available quantity: ${canMake} cups.`,
+            { cause: 400 }
+          ));
+        }
+
+        const existing = inventoryDeductions.find(
+          (d) => d.inventoryId.toString() === invItem._id.toString()
+        );
+        if (existing) {
+          existing.consumptionBase += totalConsumptionBase;
+        } else {
+          inventoryDeductions.push({
+            inventoryId: invItem._id,
+            currentQuantity: invItem.quantity,
+            currentUnit: invItem.unit,
+            consumptionBase: totalConsumptionBase,
+          });
+        }
+      }
+    }
+
+    // Re-validate merged deductions for shared ingredients
+    for (const ded of inventoryDeductions) {
+      const currentStockBase = convertToBase(ded.currentQuantity, ded.currentUnit);
+      if (currentStockBase < ded.consumptionBase) {
+        await restoreOrderQuantities(order);
+        const invItem = await inventoryModel.findById(ded.inventoryId);
+        return next(new Error(
+          `Insufficient combined inventory for "${invItem?.name}". Cannot fulfil total order.`,
+          { cause: 400 }
+        ));
+      }
+    }
+
+    // PHASE 3: Deduct product.stockQuantity
+    for (const stock of productStockChanges) {
+      await productModel.findByIdAndUpdate(stock.productId, {
+        stockQuantity: stock.newQuantity,
+        inStock: stock.newQuantity > 0,
+      });
+    }
+
+    // PHASE 4: Deduct Inventory (Recipe-based)
+    for (const ded of inventoryDeductions) {
+      const invItem = await inventoryModel.findById(ded.inventoryId);
+      if (!invItem) continue;
+
+      const currentStockBase = convertToBase(invItem.quantity, invItem.unit);
+      const newStockBase = Math.max(0, currentStockBase - ded.consumptionBase);
+      const newQuantityInUnit = baseToUnit(newStockBase, invItem.unit);
+
+      await inventoryModel.findByIdAndUpdate(ded.inventoryId, {
+        quantity: newQuantityInUnit,
+      });
+    }
+
+    // PHASE 5: Save order fields
+    order.items = processedItems;
+    order.totalAmount = calculatedTotal;
+    if (paymentMethod) order.paymentMethod = paymentMethod;
+    if (orderType) order.orderType = orderType;
+    if (tableNumber !== undefined) order.tableNumber = tableNumber;
+
+    await order.save();
+
+    const orderData = await orderModel.findById(order._id)
+      .populate("items.product", "name price image")
+      .populate("cashierId", "userName email");
+
+    return res.status(200).json({
+      success: true,
+      message: "Order updated and inventory recalculated successfully",
+      data: orderData,
+    });
+
+  } catch (err) {
+    return next(new Error(`Failed to update order: ${err.message}`, { cause: 500 }));
+  }
+};
+
+// Helper function to restore order stock if update validation fails
+const restoreOrderQuantities = async (order) => {
+  for (const item of order.items) {
+    await productModel.findByIdAndUpdate(item.product, {
+      $inc: { stockQuantity: -item.quantity },
+    });
+    // Restore raw ingredients too
+    const recipe = await recipeModel.findOne({ product: item.product, isActive: true });
+    if (recipe) {
+      for (const ing of recipe.ingredients) {
+        const cpu = consumptionPerUnit(ing.inputQuantity, ing.inputUnit, ing.outputQuantity);
+        const totalConsumptionBase = cpu * item.quantity;
+        const invItem = await inventoryModel.findById(ing.inventoryItem);
+        if (invItem) {
+          const currentStockBase = convertToBase(invItem.quantity, invItem.unit);
+          const restoredBase = Math.max(0, currentStockBase - totalConsumptionBase);
+          const restoredQty = baseToUnit(restoredBase, invItem.unit);
+          await inventoryModel.findByIdAndUpdate(ing.inventoryItem, { quantity: restoredQty });
+        }
+      }
+    }
+  }
+};

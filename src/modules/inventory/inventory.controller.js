@@ -46,6 +46,14 @@ router.patch(
   asyncHandler(inventoryService.restockItem)
 );
 
+// ===================== Update Item (Admin only) =====================
+router.patch(
+  "/:id",
+  authorization([roles.admin]),
+  validation(inventoryValidation.updateInventorySchema),
+  asyncHandler(inventoryService.updateItem)
+);
+
 // ===================== Delete Item (Admin only) =====================
 // Deleting an item wipes its history — never allowed for a cashier, or they
 // could erase the evidence of tampering.

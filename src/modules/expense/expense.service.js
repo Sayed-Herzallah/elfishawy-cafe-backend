@@ -115,3 +115,59 @@ export const deleteExpense = async (req, res, next) => {
     message: "Expense log deleted and inventory rolled back successfully",
   });
 };
+
+// =========================== 4) Update Expense ===========================
+export const updateExpense = async (req, res, next) => {
+  const { id } = req.params;
+  const { description, amount, category, inventoryItemLinked, inventoryQuantityAdded, date } = req.body;
+
+  try {
+    const expense = await expenseModel.findById(id);
+    if (!expense) return next(new Error("Expense not found", { cause: 404 }));
+
+    // 1. Rollback previous inventory adjustment if it was of inventory category
+    if (expense.category === "inventory" && expense.inventoryItemLinked) {
+      const prevItem = await inventoryModel.findById(expense.inventoryItemLinked);
+      if (prevItem) {
+        prevItem.quantity = Math.max(0, prevItem.quantity - (expense.inventoryQuantityAdded || 0));
+        await prevItem.save();
+      }
+    }
+
+    // 2. Apply new inventory adjustment if new category is inventory
+    const finalCategory = category || expense.category;
+    const finalLinkedItem = inventoryItemLinked !== undefined ? inventoryItemLinked : expense.inventoryItemLinked;
+    const finalQtyAdded = inventoryQuantityAdded !== undefined ? Number(inventoryQuantityAdded) : expense.inventoryQuantityAdded;
+
+    if (finalCategory === "inventory" && finalLinkedItem) {
+      const newItem = await inventoryModel.findById(finalLinkedItem);
+      if (!newItem) return next(new Error("Linked inventory item not found", { cause: 404 }));
+
+      newItem.quantity += Number(finalQtyAdded || 0);
+      newItem.lastRestocked = date || new Date();
+      await newItem.save();
+    }
+
+    // 3. Update expense fields
+    if (description) expense.description = description;
+    if (amount !== undefined) expense.amount = Number(amount);
+    expense.category = finalCategory;
+    expense.inventoryItemLinked = finalCategory === "inventory" ? finalLinkedItem : undefined;
+    expense.inventoryQuantityAdded = finalCategory === "inventory" ? finalQtyAdded : undefined;
+    if (date) expense.date = date;
+
+    await expense.save();
+
+    const updatedData = await expenseModel.findById(expense._id)
+      .populate("inventoryItemLinked", "name unit")
+      .populate("addedBy", "userName email");
+
+    return res.status(200).json({
+      success: true,
+      message: "Expense updated and inventory adjusted successfully",
+      data: updatedData,
+    });
+  } catch (err) {
+    return next(new Error(`Failed to update expense: ${err.message}`, { cause: 500 }));
+  }
+};

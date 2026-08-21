@@ -33,3 +33,19 @@ export const updateOrderStatusSchema = joi.object({
 export const getOrderSchema = joi.object({
   id: monggoseID("Order ID").required(),
 }).required();
+
+export const updateOrderSchema = joi.object({
+  id: monggoseID("Order ID").required(),
+  items: joi.array().items(
+    joi.object({
+      product: monggoseID("Product ID").required(),
+      quantity: joi.number().integer().min(1).required(),
+    }).required()
+  ).min(1).optional()
+    .messages({
+      "array.min": "Order must contain at least one item",
+    }),
+  paymentMethod: joi.string().valid("cash", "card").optional(),
+  orderType: joi.string().valid("dine-in", "takeaway").optional(),
+  tableNumber: joi.number().integer().min(1).optional().allow(null),
+}).required();

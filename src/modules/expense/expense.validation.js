@@ -38,3 +38,23 @@ export const createExpenseSchema = joi.object({
 export const deleteExpenseSchema = joi.object({
   id: monggoseID("Expense ID").required(),
 }).required();
+
+export const updateExpenseSchema = joi.object({
+  id: monggoseID("Expense ID").required(),
+  description: joi.string().min(3).max(100).trim().optional()
+    .messages({
+      "string.min": "Description must be at least 3 characters",
+      "string.max": "Description must not exceed 100 characters",
+    }),
+  amount: joi.number().min(0).optional()
+    .messages({
+      "number.min": "Amount cannot be negative",
+    }),
+  category: joi.string().valid("rent", "salaries", "utilities", "inventory", "other").optional()
+    .messages({
+      "any.only": "Invalid category choice",
+    }),
+  inventoryItemLinked: monggoseID("Inventory Item ID").optional().allow(null),
+  inventoryQuantityAdded: joi.number().min(0.1).optional().allow(null),
+  date: joi.date().optional(),
+}).required();

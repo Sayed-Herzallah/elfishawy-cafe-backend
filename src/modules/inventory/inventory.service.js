@@ -87,3 +87,35 @@ export const deleteItem = async (req, res, next) => {
     message: "Inventory item deleted successfully",
   });
 };
+
+// =========================== 5) Update Item ===========================
+export const updateItem = async (req, res, next) => {
+  const { id } = req.params;
+  const { name, unit, minLimit } = req.body;
+
+  const item = await inventoryModel.findById(id);
+  if (!item) return next(new Error("Inventory item not found", { cause: 404 }));
+
+  if (name && name !== item.name) {
+    const existing = await inventoryModel.findOne({ name });
+    if (existing) return next(new Error("Inventory item name already exists", { cause: 409 }));
+    item.name = name;
+  }
+
+  if (unit) item.unit = unit;
+  if (minLimit !== undefined) item.minLimit = Number(minLimit);
+
+  item.lastRestocked = new Date();
+  item.lastRestockedBy = req.user._id;
+  await item.save();
+
+  const populatedItem = await inventoryModel
+    .findById(item._id)
+    .populate("lastRestockedBy", "userName roleType");
+
+  return res.status(200).json({
+    success: true,
+    message: "Inventory item updated successfully",
+    data: populatedItem,
+  });
+};

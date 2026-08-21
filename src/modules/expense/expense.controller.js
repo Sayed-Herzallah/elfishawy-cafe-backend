@@ -33,6 +33,14 @@ router.get(
   asyncHandler(expenseService.listExpenses)
 );
 
+// ===================== Update Expense =====================
+router.patch(
+  "/:id",
+  authorization([roles.admin]),
+  validation(expenseValidation.updateExpenseSchema),
+  asyncHandler(expenseService.updateExpense)
+);
+
 // ===================== Delete Expense =====================
 // Admin only — deleting an expense also rolls back inventory quantity, and
 // letting a cashier erase entries (their own or anyone else's) would let
