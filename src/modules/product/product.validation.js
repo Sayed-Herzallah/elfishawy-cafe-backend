@@ -11,7 +11,13 @@ export const createProductSchema = joi.object({
       "string.max": "Product name must not exceed 50 characters",
       "any.required": "Product name is required",
     }),
-  description: joi.string().max(300).optional(),
+  description: joi.string().min(2).max(300).trim().required()
+    .messages({
+      "string.empty": "Product description is required",
+      "string.min": "Product description must be at least 2 characters",
+      "string.max": "Product description must not exceed 300 characters",
+      "any.required": "Product description is required",
+    }),
   price: joi.number().min(0).required()
     .messages({
       "number.min": "Price cannot be negative",
