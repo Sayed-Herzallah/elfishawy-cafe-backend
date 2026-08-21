@@ -26,7 +26,7 @@ export const validation = (schema) => {
 };
 
 // ================= Check Mongoose ID ======================
-export const monggoseID = (name = "ID") => joi.string().custom((value, helpers) => {
+export const monggoseID = (name = "ID") => joi.string().empty('').custom((value, helpers) => {
       if (!mongoose.Types.ObjectId.isValid(value))
         return helpers.error("any.invalid");
       return value;
@@ -62,5 +62,5 @@ export const checkFile = (allowedMimetypes = []) =>
       path: joi.string(),
       filename: joi.string(),
       destination: joi.string(),
-    })
+    }).unknown(true)
   );

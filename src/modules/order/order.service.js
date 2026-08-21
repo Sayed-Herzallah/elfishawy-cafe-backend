@@ -380,29 +380,24 @@ export const createOrder = async (req, res, next) => {
       }
     }
 
-    // ===== PHASE 3: Generate Order Number (Sequential & Unique per day - Purely Numeric) =====
+    // ===== PHASE 3: Generate Order Number (Sequential starting from 1) =====
     const generateOrderNumber = async () => {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-
-      const latestOrderToday = await orderModel.findOne({
-        createdAt: { $gte: today, $lt: tomorrow }
+      const latestOrder = await orderModel.findOne({
+        orderNumber: { $regex: "^[0-9]+$" }
       }).sort({ createdAt: -1 });
 
       let nextSequence = 1;
-      if (latestOrderToday && latestOrderToday.orderNumber) {
-        // Since the format is purely numeric now (e.g., 2608210005), get the last 4 digits
-        const lastSeq = parseInt(latestOrderToday.orderNumber.slice(-4), 10);
-        if (!isNaN(lastSeq)) {
-          nextSequence = lastSeq + 1;
+      if (latestOrder && latestOrder.orderNumber) {
+        const lastNum = parseInt(latestOrder.orderNumber, 10);
+        if (!isNaN(lastNum)) {
+          if (lastNum > 10000000) {
+            nextSequence = 1;
+          } else {
+            nextSequence = lastNum + 1;
+          }
         }
       }
-
-      const dateStr = new Date().toISOString().slice(2, 10).replace(/-/g, ""); // e.g. "260821"
-      const seqStr = String(nextSequence).padStart(4, '0'); // "0001", "0002"
-      return `${dateStr}${seqStr}`; // Purely numeric, e.g., "2608210001"
+      return String(nextSequence);
     };
 
     // ===== PHASE 4: Create Order (with retry on duplicate orderNumber) =====
