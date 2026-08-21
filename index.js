@@ -20,8 +20,6 @@
   import 'dotenv/config';
   import express from "express";
   import { bootstrap } from "./src/app.controller.js";
-  dotenv.config();
-
   const app = express();
   app.use(express.json());
 
