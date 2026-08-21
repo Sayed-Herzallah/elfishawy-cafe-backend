@@ -57,7 +57,7 @@ export const restockItem = async (req, res, next) => {
   const item = await inventoryModel.findById(id);
   if (!item) return next(new Error("Inventory item not found", { cause: 404 }));
 
-  item.quantity = Number(quantity);
+  item.quantity += Number(quantity);
   item.lastRestocked = new Date();
   item.lastRestockedBy = req.user._id; // audit trail: who added this stock
   await item.save();

@@ -383,18 +383,14 @@ export const createOrder = async (req, res, next) => {
     // ===== PHASE 3: Generate Order Number (Sequential starting from 1) =====
     const generateOrderNumber = async () => {
       const latestOrder = await orderModel.findOne({
-        orderNumber: { $regex: "^[0-9]+$" }
+        orderNumber: { $regex: "^[0-9]{1,6}$" }
       }).sort({ createdAt: -1 });
 
       let nextSequence = 1;
       if (latestOrder && latestOrder.orderNumber) {
         const lastNum = parseInt(latestOrder.orderNumber, 10);
         if (!isNaN(lastNum)) {
-          if (lastNum > 10000000) {
-            nextSequence = 1;
-          } else {
-            nextSequence = lastNum + 1;
-          }
+          nextSequence = lastNum + 1;
         }
       }
       return String(nextSequence);
