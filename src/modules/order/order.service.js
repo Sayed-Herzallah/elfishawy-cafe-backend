@@ -380,22 +380,59 @@ export const createOrder = async (req, res, next) => {
       }
     }
 
-    // ===== PHASE 3: Generate Order Number =====
-    const dateStr = new Date().toISOString().slice(2, 10).replace(/-/g, "");
-    const randomDigits = customAlphabet("0123456789", 4)();
-    const orderNumber = `EFC-${dateStr}-${randomDigits}`;
+    // ===== PHASE 3: Generate Order Number (Sequential & Unique per day - Purely Numeric) =====
+    const generateOrderNumber = async () => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // ===== PHASE 4: Create Order =====
-    const newOrder = await orderModel.create({
-      orderNumber,
-      items: processedItems,
-      totalAmount: calculatedTotal,
-      paymentMethod,
-      orderType,
-      tableNumber,
-      cashierId,
-      status: orderStatuses.completed,
-    });
+      const latestOrderToday = await orderModel.findOne({
+        createdAt: { $gte: today, $lt: tomorrow }
+      }).sort({ createdAt: -1 });
+
+      let nextSequence = 1;
+      if (latestOrderToday && latestOrderToday.orderNumber) {
+        // Since the format is purely numeric now (e.g., 2608210005), get the last 4 digits
+        const lastSeq = parseInt(latestOrderToday.orderNumber.slice(-4), 10);
+        if (!isNaN(lastSeq)) {
+          nextSequence = lastSeq + 1;
+        }
+      }
+
+      const dateStr = new Date().toISOString().slice(2, 10).replace(/-/g, ""); // e.g. "260821"
+      const seqStr = String(nextSequence).padStart(4, '0'); // "0001", "0002"
+      return `${dateStr}${seqStr}`; // Purely numeric, e.g., "2608210001"
+    };
+
+    // ===== PHASE 4: Create Order (with retry on duplicate orderNumber) =====
+    let newOrder = null;
+    let attempts = 0;
+    while (!newOrder && attempts < 5) {
+      attempts++;
+      const orderNumber = await generateOrderNumber();
+      try {
+        newOrder = await orderModel.create({
+          orderNumber,
+          items: processedItems,
+          totalAmount: calculatedTotal,
+          paymentMethod,
+          orderType,
+          tableNumber,
+          cashierId,
+          status: orderStatuses.completed,
+        });
+      } catch (err) {
+        // If duplicate key error on orderNumber, retry with next sequence
+        if (err.code === 11000 && err.keyPattern?.orderNumber) {
+          continue;
+        }
+        throw err;
+      }
+    }
+    if (!newOrder) {
+      return next(new Error('فشل توليد رقم فاتورة فريد، يرجى المحاولة مرة أخرى', { cause: 500 }));
+    }
 
     // ===== PHASE 5: Deduct product.stockQuantity =====
     for (const stock of productStockChanges) {
