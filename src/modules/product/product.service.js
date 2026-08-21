@@ -47,17 +47,19 @@ export const createProduct = async (req, res, next) => {
   const existing = await productModel.findOne({ name });
   if (existing) return next(new Error("Product name already exists", { cause: 409 }));
 
-  let image = { secure_url: "", public_id: "" };
-  if (req.file) {
-    try {
-      const uploadResult = await uploadToCloudinary(req.file.buffer);
-      image = {
-        secure_url: uploadResult.secure_url,
-        public_id: uploadResult.public_id,
-      };
-    } catch (err) {
-      return next(new Error(`Failed to upload product image: ${err.message}`, { cause: 500 }));
-    }
+  let image;
+  if (!req.file) {
+    return next(new Error("Product image is required (upload an image with 'image' field)", { cause: 400 }));
+  }
+
+  try {
+    const uploadResult = await uploadToCloudinary(req.file.buffer);
+    image = {
+      secure_url: uploadResult.secure_url,
+      public_id: uploadResult.public_id,
+    };
+  } catch (err) {
+    return next(new Error(`Failed to upload product image: ${err.message}`, { cause: 500 }));
   }
 
   const newProduct = await productModel.create({

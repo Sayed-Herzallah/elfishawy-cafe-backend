@@ -19,7 +19,12 @@ export const createProductSchema = joi.object({
     }),
   category: monggoseID("Category ID").required(),
   stockQuantity: joi.number().integer().min(0).default(0),
-  file: checkFile(mimetypes).optional(),
+  file: checkFile(mimetypes)
+    .required()
+    .messages({
+      "any.required": "Product image is required (upload an image with 'image' field)",
+      "array.includesRequiredUnknowns": "Product image is required",
+    }),
 }).required();
 
 export const updateProductSchema = joi.object({
