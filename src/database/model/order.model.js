@@ -73,6 +73,10 @@ const orderSchema = new mongoose.Schema(
       ref: "User_Data",
       required: true,
     },
+    notes: {
+      type: String,
+      default: "",
+    },
   },
   {
     timestamps: true,

@@ -290,7 +290,7 @@ const baseToUnit = (baseQty, unit) => {
 
 // =========================== 1) Create Order ===========================
 export const createOrder = async (req, res, next) => {
-  const { items, paymentMethod, orderType, tableNumber } = req.body;
+  const { items, paymentMethod, orderType, tableNumber, notes } = req.body;
   const cashierId = req.user._id;
 
   let calculatedTotal = 0;
@@ -412,6 +412,7 @@ export const createOrder = async (req, res, next) => {
           tableNumber,
           cashierId,
           status: orderStatuses.completed,
+          notes: notes || "",
         });
       } catch (err) {
         // If duplicate key error on orderNumber, retry with next sequence
@@ -589,7 +590,7 @@ export const updateOrderStatus = async (req, res, next) => {
 // =========================== 5) Update Order ===========================
 export const updateOrder = async (req, res, next) => {
   const { id } = req.params;
-  const { items, paymentMethod, orderType, tableNumber } = req.body;
+  const { items, paymentMethod, orderType, tableNumber, notes } = req.body;
 
   try {
     const order = await orderModel.findById(id);
@@ -743,6 +744,7 @@ export const updateOrder = async (req, res, next) => {
     if (paymentMethod) order.paymentMethod = paymentMethod;
     if (orderType) order.orderType = orderType;
     if (tableNumber !== undefined) order.tableNumber = tableNumber;
+    if (notes !== undefined) order.notes = notes;
 
     await order.save();
 

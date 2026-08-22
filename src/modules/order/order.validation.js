@@ -20,6 +20,7 @@ export const createOrderSchema = joi.object({
   }).messages({
     "any.required": "Table number is required for dine-in orders",
   }),
+  notes: joi.string().allow("").optional(),
 }).required();
 
 export const updateOrderStatusSchema = joi.object({
@@ -48,4 +49,5 @@ export const updateOrderSchema = joi.object({
   paymentMethod: joi.string().valid("cash", "card").optional(),
   orderType: joi.string().valid("dine-in", "takeaway").optional(),
   tableNumber: joi.number().integer().min(1).optional().allow(null),
+  notes: joi.string().allow("").optional(),
 }).required();
