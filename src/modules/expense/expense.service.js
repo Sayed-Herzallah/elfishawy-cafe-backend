@@ -94,11 +94,12 @@ export const listExpenses = async (req, res, next) => {
     filter.category = category;
   }
 
-  // Anti-theft rule: cashiers can only ever see the expenses THEY logged.
-  // Only admins can see the full expense list — that total cost data is
-  // exactly what would let someone reverse-engineer the shop's profit.
+  // Purchases visibility rule: a cashier may see raw-material purchase records
+  // (category "inventory") regardless of who logged them — admin restocks or
+  // their own spot buys. Every other category (rent, salaries, utilities...)
+  // stays invisible to cashiers, so they still never see operating costs.
   if (req.user.roleType === roles.cashier) {
-    filter.addedBy = req.user._id;
+    filter.category = "inventory";
   }
 
   if (searchDate) {
