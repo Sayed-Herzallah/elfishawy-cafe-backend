@@ -6,11 +6,6 @@ export const orderStatuses = {
   cancelled: "cancelled",
 };
 
-export const paymentMethods = {
-  cash: "cash",
-  card: "card",
-};
-
 const orderSchema = new mongoose.Schema(
   {
     orderNumber: {
