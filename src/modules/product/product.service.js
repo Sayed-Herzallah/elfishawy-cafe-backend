@@ -39,12 +39,18 @@ const calcAvailableByRecipe = async (productId) => {
 
 // =========================== 1) Create Product ===========================
 export const createProduct = async (req, res, next) => {
-  const { name, description, price, category, stockQuantity } = req.body;
+  const { name, description, price, category, stockQuantity, variantType } = req.body;
 
   const categoryExists = await categoryModel.findById(category);
   if (!categoryExists) return next(new Error("Category not found", { cause: 404 }));
 
-  const existing = await productModel.findOne({ name });
+  // تركيب الاسم النهائي: "قهوة" + نوع "سادة" = "قهوة سادة"
+  const baseName = String(name).trim();
+  const finalVariant = (variantType || "").trim();
+  const composedName = finalVariant ? `${baseName} ${finalVariant}` : baseName;
+
+  // منع التكرار: نفس الاسم + نفس النوع = مرفوض (نفس الاسم بنوع مختلف = مسموح)
+  const existing = await productModel.findOne({ name: composedName });
   if (existing) return next(new Error("Product name already exists", { cause: 409 }));
 
   let image;
@@ -63,7 +69,9 @@ export const createProduct = async (req, res, next) => {
   }
 
   const newProduct = await productModel.create({
-    name,
+    name: composedName,
+    baseName,
+    variantType: finalVariant,
     description,
     price,
     category,
@@ -87,9 +95,11 @@ export const listPublicMenu = async (req, res, next) => {
     categoryModel.find({}).sort({ name: 1 }).select("name description").lean(),
   ]);
 
-  const publicProducts = products.map((p) => ({
+    const publicProducts = products.map((p) => ({
     _id: p._id,
     name: p.name,
+    baseName: p.baseName || "",
+    variantType: p.variantType || "",
     description: p.description || "",
     price: p.price,
     inStock: !!p.inStock,
@@ -168,7 +178,7 @@ export const getProduct = async (req, res, next) => {
 // =========================== 4) Update Product ===========================
 export const updateProduct = async (req, res, next) => {
   const { id } = req.params;
-  const { name, description, price, category, stockQuantity, inStock } = req.body;
+  const { name, description, price, category, stockQuantity, inStock, variantType } = req.body;
 
   const product = await productModel.findById(id);
   if (!product) return next(new Error("Product not found", { cause: 404 }));
@@ -179,14 +189,21 @@ export const updateProduct = async (req, res, next) => {
     product.category = category;
   }
 
-  if (name && name !== product.name) {
-    const existing = await productModel.findOne({ name });
-    if (existing) return next(new Error("Product name already exists", { cause: 409 }));
-    product.name = name;
-  }
+  // إعادة تركيب الاسم لو الاسم أو النوع اتغيروا: "قهوة" + "سادة" = "قهوة سادة"
+  if (name !== undefined || variantType !== undefined) {
+    const baseName = (name !== undefined ? String(name).trim() : (product.baseName || product.name)).trim();
+    const finalVariant = variantType !== undefined ? String(variantType).trim() : (product.variantType || "").trim();
+    const composedName = finalVariant ? `${baseName} ${finalVariant}` : baseName;
 
-  if (description !== undefined) product.description = description;
-  if (price !== undefined) product.price = Number(price);
+    if (composedName !== product.name) {
+      const existing = await productModel.findOne({ name: composedName });
+      if (existing) return next(new Error("Product name already exists", { cause: 409 }));
+    }
+
+    product.name = composedName;
+    product.baseName = baseName;
+    product.variantType = finalVariant;
+  }
 
   if (stockQuantity !== undefined) {
     product.stockQuantity = Number(stockQuantity);

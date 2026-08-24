@@ -11,11 +11,6 @@ export const paymentMethods = {
   card: "card",
 };
 
-export const orderTypes = {
-  dineIn: "dine-in",
-  takeaway: "takeaway",
-};
-
 const orderSchema = new mongoose.Schema(
   {
     orderNumber: {
@@ -56,17 +51,6 @@ const orderSchema = new mongoose.Schema(
       type: String,
       enum: Object.values(paymentMethods),
       default: paymentMethods.cash,
-    },
-    orderType: {
-      type: String,
-      enum: Object.values(orderTypes),
-      default: orderTypes.dineIn,
-    },
-    tableNumber: {
-      type: Number,
-      required: function () {
-        return this.orderType === orderTypes.dineIn;
-      },
     },
     cashierId: {
       type: mongoose.Schema.Types.ObjectId,

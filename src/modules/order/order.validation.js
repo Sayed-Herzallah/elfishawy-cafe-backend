@@ -12,14 +12,6 @@ export const createOrderSchema = joi.object({
       "array.min": "Order must contain at least one item",
     }),
   paymentMethod: joi.string().valid("cash", "card").default("cash"),
-  orderType: joi.string().valid("dine-in", "takeaway").default("dine-in"),
-  tableNumber: joi.number().integer().min(1).when("orderType", {
-    is: "dine-in",
-    then: joi.required(),
-    otherwise: joi.optional().allow(null),
-  }).messages({
-    "any.required": "Table number is required for dine-in orders",
-  }),
   notes: joi.string().allow("").optional(),
 }).required();
 
@@ -47,7 +39,5 @@ export const updateOrderSchema = joi.object({
       "array.min": "Order must contain at least one item",
     }),
   paymentMethod: joi.string().valid("cash", "card").optional(),
-  orderType: joi.string().valid("dine-in", "takeaway").optional(),
-  tableNumber: joi.number().integer().min(1).optional().allow(null),
   notes: joi.string().allow("").optional(),
 }).required();

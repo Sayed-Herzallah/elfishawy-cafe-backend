@@ -25,6 +25,7 @@ export const createProductSchema = joi.object({
     }),
   category: monggoseID("Category ID").required(),
   stockQuantity: joi.number().integer().min(0).default(0),
+  variantType: joi.string().max(30).trim().allow("").optional(),
   file: checkFile(mimetypes)
     .required()
     .messages({
@@ -41,6 +42,7 @@ export const updateProductSchema = joi.object({
   category: monggoseID("Category ID").optional(),
   stockQuantity: joi.number().integer().min(0).optional(),
   inStock: joi.boolean().optional(),
+  variantType: joi.string().max(30).trim().allow("").optional(),
   file: checkFile(mimetypes).optional(),
 }).required();
 
