@@ -4,7 +4,7 @@ import { roles } from "../../database/model/user.model.js";
 
 // =========================== 1) Create Expense ===========================
 export const createExpense = async (req, res, next) => {
-  const { description, amount, category, inventoryItemLinked, inventoryQuantityAdded, totalCost, date } = req.body;
+  const { description, amount, category, inventoryItemLinked, inventoryQuantityAdded, totalCost, unitCost, date } = req.body;
   const addedBy = req.user._id;
 
   // Anti-theft rule: a cashier may only log "inventory" expenses (e.g. buying
@@ -23,11 +23,39 @@ export const createExpense = async (req, res, next) => {
       const item = await inventoryModel.findById(inventoryItemLinked);
       if (!item) return next(new Error("Linked inventory item not found", { cause: 404 }));
 
+      const qtyNum = Number(inventoryQuantityAdded) || 0;
+      // الإجمالي = totalCost المرسل وإلا amount (هما نفس الشيء في فاتورة الشراء)
+      const finalTotalCost = Number(totalCost ?? amount) || 0;
+      const finalUnitCost =
+        qtyNum > 0 && finalTotalCost > 0 ? Number((finalTotalCost / qtyNum).toFixed(2)) : 0;
+
       // Restock inventory item automatically!
-      item.quantity += Number(inventoryQuantityAdded);
-      item.lastRestockTotalCost = Number(totalCost);
+      item.quantity += qtyNum;
+      item.costPrice = finalUnitCost || item.costPrice;
+      item.lastRestockTotalCost = finalTotalCost;
       item.lastRestocked = date || new Date();
       await item.save();
+
+      const newExpense = await expenseModel.create({
+        description,
+        amount: Number(amount),
+        category,
+        inventoryItemLinked,
+        inventoryQuantityAdded: qtyNum || undefined,
+        unitCost: finalUnitCost,
+        date: date || new Date(),
+        addedBy,
+      });
+
+      const expenseData = await expenseModel.findById(newExpense._id)
+        .populate("inventoryItemLinked", "name unit lastRestockTotalCost")
+        .populate("addedBy", "userName email");
+
+      return res.status(201).json({
+        success: true,
+        message: "Expense logged successfully",
+        data: expenseData,
+      });
     }
 
     const newExpense = await expenseModel.create({
@@ -36,6 +64,7 @@ export const createExpense = async (req, res, next) => {
       category,
       inventoryItemLinked,
       inventoryQuantityAdded: Number(inventoryQuantityAdded) || undefined,
+      unitCost: Number(unitCost) || undefined,
       date: date || new Date(),
       addedBy,
     });
@@ -120,7 +149,7 @@ export const deleteExpense = async (req, res, next) => {
 // =========================== 4) Update Expense ===========================
 export const updateExpense = async (req, res, next) => {
   const { id } = req.params;
-  const { description, amount, category, inventoryItemLinked, inventoryQuantityAdded, totalCost, date } = req.body;
+  const { description, amount, category, inventoryItemLinked, inventoryQuantityAdded, totalCost, unitCost, date } = req.body;
 
   try {
     const expense = await expenseModel.findById(id);
@@ -140,12 +169,21 @@ export const updateExpense = async (req, res, next) => {
     const finalLinkedItem = inventoryItemLinked !== undefined ? inventoryItemLinked : expense.inventoryItemLinked;
     const finalQtyAdded = inventoryQuantityAdded !== undefined ? Number(inventoryQuantityAdded) : expense.inventoryQuantityAdded;
     const finalTotalCost = totalCost !== undefined ? Number(totalCost) : undefined;
+    const finalUnitCost =
+      finalQtyAdded > 0 && finalTotalCost > 0
+        ? Number((finalTotalCost / finalQtyAdded).toFixed(2))
+        : unitCost !== undefined
+        ? Number(unitCost) || 0
+        : undefined;
 
     if (finalCategory === "inventory" && finalLinkedItem) {
       const newItem = await inventoryModel.findById(finalLinkedItem);
       if (!newItem) return next(new Error("Linked inventory item not found", { cause: 404 }));
 
       newItem.quantity += Number(finalQtyAdded || 0);
+      if (finalUnitCost !== undefined && finalUnitCost > 0) {
+        newItem.costPrice = finalUnitCost;
+      }
       if (finalTotalCost !== undefined) {
         newItem.lastRestockTotalCost = finalTotalCost;
       }
@@ -159,6 +197,9 @@ export const updateExpense = async (req, res, next) => {
     expense.category = finalCategory;
     expense.inventoryItemLinked = finalCategory === "inventory" ? finalLinkedItem : undefined;
     expense.inventoryQuantityAdded = finalCategory === "inventory" ? finalQtyAdded : undefined;
+    if (finalCategory === "inventory" && finalUnitCost !== undefined) {
+      expense.unitCost = finalUnitCost;
+    }
     if (date) expense.date = date;
 
     await expense.save();

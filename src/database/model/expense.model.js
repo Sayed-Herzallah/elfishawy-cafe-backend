@@ -41,6 +41,12 @@ const expenseSchema = new mongoose.Schema(
       },
       min: [0.1, "Quantity added must be greater than 0"],
     },
+    // سعر وحدة الشراء وقت التوريد — لتاريخ الأسعار (سعر قديم ← سعر جديد)
+    unitCost: {
+      type: Number,
+      default: 0,
+      min: [0, "Unit cost cannot be negative"],
+    },
     date: {
       type: Date,
       required: [true, "Date is required"],

@@ -32,14 +32,15 @@ export const createExpenseSchema = joi.object({
   }).messages({
     "any.required": "Added quantity is required for inventory category",
   }),
-  totalCost: joi.number().min(0).when("category", {
-    is: "inventory",
-    then: joi.required(),
-    otherwise: joi.optional().allow(null),
-  }).messages({
-    "number.min": "Total cost cannot be negative",
-    "any.required": "Total cost is required for inventory category",
-  }),
+  // اختياري — لو مش مبعوت الخدمة بتاخد amount كإجمالي للفاتورة
+  totalCost: joi.number().min(0).optional().allow(null, "")
+    .messages({
+      "number.min": "Total cost cannot be negative",
+    }),
+  unitCost: joi.number().min(0).optional().allow(null, "")
+    .messages({
+      "number.min": "Unit cost cannot be negative",
+    }),
   date: joi.date().optional(),
 }).required();
 
@@ -67,6 +68,10 @@ export const updateExpenseSchema = joi.object({
   totalCost: joi.number().min(0).optional().allow(null)
     .messages({
       "number.min": "Total cost cannot be negative",
+    }),
+  unitCost: joi.number().min(0).optional().allow(null)
+    .messages({
+      "number.min": "Unit cost cannot be negative",
     }),
   date: joi.date().optional(),
 }).required();

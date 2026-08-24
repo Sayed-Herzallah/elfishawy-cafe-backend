@@ -35,6 +35,10 @@ export const restockInventorySchema = joi.object({
     .messages({
       "number.min": "Total cost cannot be negative",
     }),
+  costPrice: joi.number().min(0).optional()
+    .messages({
+      "number.min": "Cost price cannot be negative",
+    }),
 }).required();
 
 export const deleteInventorySchema = joi.object({
