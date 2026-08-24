@@ -29,5 +29,13 @@ app.get("/", (req, res) => {
 
 await bootstrap(app, express);
 
+// Local development server — على Vercel بيشتغل Serverless فمش محتاج listen
+if (!process.env.VERCEL) {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT} ✅`);
+  });
+}
+
 export default app;
 
