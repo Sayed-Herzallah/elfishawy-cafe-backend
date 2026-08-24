@@ -31,10 +31,9 @@ export const restockInventorySchema = joi.object({
       "number.positive": "Restock quantity must be positive",
       "any.required": "Restock quantity is required",
     }),
-  totalCost: joi.number().min(0).required()
+  totalCost: joi.number().min(0).optional()
     .messages({
       "number.min": "Total cost cannot be negative",
-      "any.required": "Total cost is required for restocking",
     }),
 }).required();
 

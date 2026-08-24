@@ -36,7 +36,8 @@ router.get(
 
 // ===================== Restock Item (Admin + Cashier) =====================
 // Cashier can ADD stock when a delivery arrives. The validation schema only
-// accepts a POSITIVE quantity, so this route can only increase stock — a
+// accepts a POSITIVE quantity, so this route can
+//  only increase stock — a
 // cashier can never use it to quietly reduce/zero-out stock to cover a theft.
 // Every restock is stamped with who did it (lastRestockedBy) and when.
 router.patch(
