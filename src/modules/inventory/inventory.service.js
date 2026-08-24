@@ -172,7 +172,7 @@ export const deleteItem = async (req, res, next) => {
 // =========================== 5) Update Item ===========================
 export const updateItem = async (req, res, next) => {
   const { id } = req.params;
-  const { name, unit, minLimit, costPrice, totalCost } = req.body;
+  const { name, quantity, unit, minLimit, costPrice, totalCost } = req.body;
 
   const item = await inventoryModel.findById(id);
   if (!item) return next(new Error("Inventory item not found", { cause: 404 }));
@@ -181,6 +181,14 @@ export const updateItem = async (req, res, next) => {
     const existing = await inventoryModel.findOne({ name });
     if (existing) return next(new Error("Inventory item name already exists", { cause: 409 }));
     item.name = name;
+  }
+
+  // ✅ تصحيح الرصيد يدوياً — أدمن فقط (الراوت محمي بـ authorization admin)
+  // بيتسجل مين صلّح الرصيد وامتى في سجل التوريد الأخير للشفافية
+  if (quantity !== undefined) {
+    item.quantity = toNumOr(quantity, item.quantity);
+    item.lastRestocked = new Date();
+    item.lastRestockedBy = req.user._id;
   }
 
   if (unit) item.unit = unit;

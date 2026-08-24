@@ -52,6 +52,11 @@ export const updateInventorySchema = joi.object({
       "string.min": "Item name must be at least 2 characters",
       "string.max": "Item name must not exceed 50 characters",
     }),
+  // ✅ تصحيح الرصيد للأدمن فقط — الكاشير لسه ممنوع من أي خصم عبر restock (موجب فقط)
+  quantity: joi.number().min(0).optional()
+    .messages({
+      "number.min": "Quantity cannot be negative",
+    }),
   unit: joi.string().min(1).max(20).trim().optional(),
   minLimit: joi.number().min(0).optional()
     .messages({
