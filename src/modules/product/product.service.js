@@ -39,18 +39,14 @@ const calcAvailableByRecipe = async (productId) => {
 
 // =========================== 1) Create Product ===========================
 export const createProduct = async (req, res, next) => {
-  const { name, description, price, category, stockQuantity, variantType } = req.body;
+  const { name, description, price, category, stockQuantity } = req.body;
 
   const categoryExists = await categoryModel.findById(category);
   if (!categoryExists) return next(new Error("Category not found", { cause: 404 }));
 
-  // تركيب الاسم النهائي: "قهوة" + نوع "سادة" = "قهوة سادة"
-  const baseName = String(name).trim();
-  const finalVariant = (variantType || "").trim();
-  const composedName = finalVariant ? `${baseName} ${finalVariant}` : baseName;
+  const productName = String(name).trim();
 
-  // منع التكرار: نفس الاسم + نفس النوع = مرفوض (نفس الاسم بنوع مختلف = مسموح)
-  const existing = await productModel.findOne({ name: composedName });
+  const existing = await productModel.findOne({ name: productName });
   if (existing) return next(new Error("Product name already exists", { cause: 409 }));
 
   let image;
@@ -69,9 +65,7 @@ export const createProduct = async (req, res, next) => {
   }
 
   const newProduct = await productModel.create({
-    name: composedName,
-    baseName,
-    variantType: finalVariant,
+    name: productName,
     description,
     price,
     category,
@@ -149,7 +143,7 @@ export const getProduct = async (req, res, next) => {
 // =========================== 4) Update Product ===========================
 export const updateProduct = async (req, res, next) => {
   const { id } = req.params;
-  const { name, description, price, category, stockQuantity, inStock, variantType } = req.body;
+  const { name, description, price, category, stockQuantity, inStock } = req.body;
 
   const product = await productModel.findById(id);
   if (!product) return next(new Error("Product not found", { cause: 404 }));
@@ -160,20 +154,11 @@ export const updateProduct = async (req, res, next) => {
     product.category = category;
   }
 
-  // إعادة تركيب الاسم لو الاسم أو النوع اتغيروا: "قهوة" + "سادة" = "قهوة سادة"
-  if (name !== undefined || variantType !== undefined) {
-    const baseName = (name !== undefined ? String(name).trim() : (product.baseName || product.name)).trim();
-    const finalVariant = variantType !== undefined ? String(variantType).trim() : (product.variantType || "").trim();
-    const composedName = finalVariant ? `${baseName} ${finalVariant}` : baseName;
-
-    if (composedName !== product.name) {
-      const existing = await productModel.findOne({ name: composedName });
-      if (existing) return next(new Error("Product name already exists", { cause: 409 }));
-    }
-
-    product.name = composedName;
-    product.baseName = baseName;
-    product.variantType = finalVariant;
+  if (name !== undefined && String(name).trim() !== product.name) {
+    const productName = String(name).trim();
+    const existing = await productModel.findOne({ name: productName });
+    if (existing) return next(new Error("Product name already exists", { cause: 409 }));
+    product.name = productName;
   }
 
   if (stockQuantity !== undefined) {

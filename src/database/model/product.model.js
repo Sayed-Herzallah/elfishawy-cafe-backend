@@ -33,20 +33,6 @@ const productSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
-    // الاسم الأساسي كما كتبه الأدمن (بدون النوع) — يُستخدم لتجميع الأنواع في المنيو
-    baseName: {
-      type: String,
-      trim: true,
-      default: "",
-      maxlength: [50, "Base name must not exceed 50 characters"],
-    },
-    // نوع المنتج: سادة / زيادة / دبل... (اختياري) — يُطبع ضمن اسم المنتج في الفاتورة
-    variantType: {
-      type: String,
-      trim: true,
-      default: "",
-      maxlength: [30, "Variant type must not exceed 30 characters"],
-    },
     stockQuantity: {
       type: Number,
       default: 0,
