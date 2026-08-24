@@ -79,6 +79,33 @@ export const createProduct = async (req, res, next) => {
   });
 };
 
+// ===================== Public Menu (زائر بدون تسجيل دخول) =====================
+// يرجّع فقط البيانات الآمنة للعرض العام — بدون تكاليف أو مخزون أو معرفات داخلية حساسة
+export const listPublicMenu = async (req, res, next) => {
+  const [products, categories] = await Promise.all([
+    productModel.find({}).sort({ createdAt: -1 }).populate("category", "name").lean(),
+    categoryModel.find({}).sort({ name: 1 }).select("name description").lean(),
+  ]);
+
+  const publicProducts = products.map((p) => ({
+    _id: p._id,
+    name: p.name,
+    description: p.description || "",
+    price: p.price,
+    inStock: !!p.inStock,
+    image: { secure_url: p.image?.secure_url || "" },
+    category: p.category?._id
+      ? { _id: p.category._id, name: p.category.name }
+      : null,
+  }));
+
+  return res.status(200).json({
+    success: true,
+    message: "Public menu retrieved successfully",
+    data: { products: publicProducts, categories },
+  });
+};
+
 // =========================== 2) List Products ===========================
 export const listProducts = async (req, res, next) => {
   const { search, category, inStock } = req.query;
