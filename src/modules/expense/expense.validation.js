@@ -32,6 +32,14 @@ export const createExpenseSchema = joi.object({
   }).messages({
     "any.required": "Added quantity is required for inventory category",
   }),
+  totalCost: joi.number().min(0).when("category", {
+    is: "inventory",
+    then: joi.required(),
+    otherwise: joi.optional().allow(null),
+  }).messages({
+    "number.min": "Total cost cannot be negative",
+    "any.required": "Total cost is required for inventory category",
+  }),
   date: joi.date().optional(),
 }).required();
 
@@ -56,5 +64,9 @@ export const updateExpenseSchema = joi.object({
     }),
   inventoryItemLinked: monggoseID("Inventory Item ID").optional().allow(null),
   inventoryQuantityAdded: joi.number().min(0.1).optional().allow(null),
+  totalCost: joi.number().min(0).optional().allow(null)
+    .messages({
+      "number.min": "Total cost cannot be negative",
+    }),
   date: joi.date().optional(),
 }).required();

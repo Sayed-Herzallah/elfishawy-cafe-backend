@@ -2,7 +2,7 @@ import { inventoryModel } from "../../database/model/inventory.model.js";
 
 // =========================== 1) Create Item ===========================
 export const createItem = async (req, res, next) => {
-  const { name, quantity, unit, minLimit } = req.body;
+  const { name, quantity, unit, minLimit, costPrice, lastRestockTotalCost } = req.body;
 
   const existing = await inventoryModel.findOne({ name });
   if (existing) return next(new Error("Inventory item name already exists", { cause: 409 }));
@@ -12,6 +12,8 @@ export const createItem = async (req, res, next) => {
     quantity: Number(quantity) || 0,
     unit,
     minLimit: Number(minLimit),
+    costPrice: Number(costPrice) || 0,
+    lastRestockTotalCost: Number(lastRestockTotalCost) || 0,
     lastRestocked: new Date(),
   });
 
@@ -52,12 +54,13 @@ export const listInventory = async (req, res, next) => {
 // =========================== 3) Restock Item ===========================
 export const restockItem = async (req, res, next) => {
   const { id } = req.params;
-  const { quantity } = req.body;
+  const { quantity, totalCost } = req.body;
 
   const item = await inventoryModel.findById(id);
   if (!item) return next(new Error("Inventory item not found", { cause: 404 }));
 
   item.quantity += Number(quantity);
+  item.lastRestockTotalCost = Number(totalCost);
   item.lastRestocked = new Date();
   item.lastRestockedBy = req.user._id; // audit trail: who added this stock
   await item.save();
@@ -91,7 +94,7 @@ export const deleteItem = async (req, res, next) => {
 // =========================== 5) Update Item ===========================
 export const updateItem = async (req, res, next) => {
   const { id } = req.params;
-  const { name, unit, minLimit } = req.body;
+  const { name, unit, minLimit, costPrice, lastRestockTotalCost } = req.body;
 
   const item = await inventoryModel.findById(id);
   if (!item) return next(new Error("Inventory item not found", { cause: 404 }));
@@ -104,6 +107,8 @@ export const updateItem = async (req, res, next) => {
 
   if (unit) item.unit = unit;
   if (minLimit !== undefined) item.minLimit = Number(minLimit);
+  if (costPrice !== undefined) item.costPrice = Number(costPrice);
+  if (lastRestockTotalCost !== undefined) item.lastRestockTotalCost = Number(lastRestockTotalCost);
 
   item.lastRestocked = new Date();
   item.lastRestockedBy = req.user._id;

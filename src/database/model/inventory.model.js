@@ -27,6 +27,16 @@ const inventorySchema = new mongoose.Schema(
       default: 5,
       min: [0, "Minimum threshold cannot be negative"],
     },
+    costPrice: {
+      type: Number,
+      default: 0,
+      min: [0, "Cost price cannot be negative"],
+    },
+    lastRestockTotalCost: {
+      type: Number,
+      default: 0,
+      min: [0, "Total cost cannot be negative"],
+    },
     lastRestocked: {
       type: Date,
       default: Date.now,

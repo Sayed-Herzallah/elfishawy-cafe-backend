@@ -4,7 +4,7 @@ import { roles } from "../../database/model/user.model.js";
 
 // =========================== 1) Create Expense ===========================
 export const createExpense = async (req, res, next) => {
-  const { description, amount, category, inventoryItemLinked, inventoryQuantityAdded, date } = req.body;
+  const { description, amount, category, inventoryItemLinked, inventoryQuantityAdded, totalCost, date } = req.body;
   const addedBy = req.user._id;
 
   // Anti-theft rule: a cashier may only log "inventory" expenses (e.g. buying
@@ -25,6 +25,7 @@ export const createExpense = async (req, res, next) => {
 
       // Restock inventory item automatically!
       item.quantity += Number(inventoryQuantityAdded);
+      item.lastRestockTotalCost = Number(totalCost);
       item.lastRestocked = date || new Date();
       await item.save();
     }
@@ -40,7 +41,7 @@ export const createExpense = async (req, res, next) => {
     });
 
     const expenseData = await expenseModel.findById(newExpense._id)
-      .populate("inventoryItemLinked", "name unit")
+      .populate("inventoryItemLinked", "name unit lastRestockTotalCost")
       .populate("addedBy", "userName email");
 
     return res.status(201).json({
@@ -119,7 +120,7 @@ export const deleteExpense = async (req, res, next) => {
 // =========================== 4) Update Expense ===========================
 export const updateExpense = async (req, res, next) => {
   const { id } = req.params;
-  const { description, amount, category, inventoryItemLinked, inventoryQuantityAdded, date } = req.body;
+  const { description, amount, category, inventoryItemLinked, inventoryQuantityAdded, totalCost, date } = req.body;
 
   try {
     const expense = await expenseModel.findById(id);
@@ -138,12 +139,16 @@ export const updateExpense = async (req, res, next) => {
     const finalCategory = category || expense.category;
     const finalLinkedItem = inventoryItemLinked !== undefined ? inventoryItemLinked : expense.inventoryItemLinked;
     const finalQtyAdded = inventoryQuantityAdded !== undefined ? Number(inventoryQuantityAdded) : expense.inventoryQuantityAdded;
+    const finalTotalCost = totalCost !== undefined ? Number(totalCost) : undefined;
 
     if (finalCategory === "inventory" && finalLinkedItem) {
       const newItem = await inventoryModel.findById(finalLinkedItem);
       if (!newItem) return next(new Error("Linked inventory item not found", { cause: 404 }));
 
       newItem.quantity += Number(finalQtyAdded || 0);
+      if (finalTotalCost !== undefined) {
+        newItem.lastRestockTotalCost = finalTotalCost;
+      }
       newItem.lastRestocked = date || new Date();
       await newItem.save();
     }
@@ -159,7 +164,7 @@ export const updateExpense = async (req, res, next) => {
     await expense.save();
 
     const updatedData = await expenseModel.findById(expense._id)
-      .populate("inventoryItemLinked", "name unit")
+      .populate("inventoryItemLinked", "name unit lastRestockTotalCost")
       .populate("addedBy", "userName email");
 
     return res.status(200).json({
