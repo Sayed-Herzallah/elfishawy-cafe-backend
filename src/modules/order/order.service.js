@@ -11,7 +11,7 @@ const baseToUnit = (baseQty, unit) => {
 
 // =========================== 1) Create Order ===========================
 export const createOrder = async (req, res, next) => {
-  const { items, paymentMethod, notes } = req.body;
+  const { items, tableNumber, notes } = req.body;
   const cashierId = req.user._id;
 
   let calculatedTotal = 0;
@@ -128,8 +128,6 @@ export const createOrder = async (req, res, next) => {
           orderNumber,
           items: processedItems,
           totalAmount: calculatedTotal,
-          paymentMethod,
-          orderType,
           tableNumber,
           cashierId,
           status: orderStatuses.completed,
@@ -186,11 +184,10 @@ export const createOrder = async (req, res, next) => {
 
 // =========================== 2) Get Orders ===========================
 export const getOrders = async (req, res, next) => {
-  const { status, orderType, searchDate, cashierId } = req.query;
+  const { status, searchDate, cashierId } = req.query;
   const filter = {};
 
   if (status) filter.status = status;
-  if (orderType) filter.orderType = orderType;
 
   // Anti-theft rule: cashiers can only ever see their OWN orders.
   // Only admins are allowed to view/filter sales across all cashiers.
@@ -311,7 +308,7 @@ export const updateOrderStatus = async (req, res, next) => {
 // =========================== 5) Update Order ===========================
 export const updateOrder = async (req, res, next) => {
   const { id } = req.params;
-  const { items, paymentMethod, orderType, tableNumber, notes } = req.body;
+  const { items, tableNumber, notes } = req.body;
 
   try {
     const order = await orderModel.findById(id);
@@ -462,8 +459,6 @@ export const updateOrder = async (req, res, next) => {
     // PHASE 5: Save order fields
     order.items = processedItems;
     order.totalAmount = calculatedTotal;
-    if (paymentMethod) order.paymentMethod = paymentMethod;
-    if (orderType) order.orderType = orderType;
     if (tableNumber !== undefined) order.tableNumber = tableNumber;
     if (notes !== undefined) order.notes = notes;
 

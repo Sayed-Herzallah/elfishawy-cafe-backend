@@ -11,7 +11,11 @@ export const createOrderSchema = joi.object({
     .messages({
       "array.min": "Order must contain at least one item",
     }),
-  paymentMethod: joi.string().valid("cash", "card").default("cash"),
+  paymentMethod: joi.forbidden(),
+  tableNumber: joi.number().integer().min(1).required()
+    .messages({
+      "any.required": "Table number is required",
+    }),
   notes: joi.string().allow("").optional(),
 }).required();
 
@@ -38,6 +42,8 @@ export const updateOrderSchema = joi.object({
     .messages({
       "array.min": "Order must contain at least one item",
     }),
-  paymentMethod: joi.string().valid("cash", "card").optional(),
+  paymentMethod: joi.forbidden(),
+  orderType: joi.forbidden(),
+  tableNumber: joi.number().integer().min(1).optional().allow(null),
   notes: joi.string().allow("").optional(),
 }).required();

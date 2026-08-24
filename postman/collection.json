@@ -890,7 +890,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"items\": [\n    {\n      \"product\": \"{{productId}}\",\n      \"quantity\": 2\n    }\n  ],\n  \"paymentMethod\": \"cash\",\n  \"orderType\": \"dine-in\",\n  \"tableNumber\": 5\n}"
+              "raw": "{\n  \"items\": [\n    {\n      \"product\": \"{{productId}}\",\n      \"quantity\": 2\n    }\n  ],\n  \"tableNumber\": 5\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/orders",

@@ -42,10 +42,10 @@ const orderSchema = new mongoose.Schema(
       enum: Object.values(orderStatuses),
       default: orderStatuses.completed, // Default to completed as it's POS-driven usually
     },
-    paymentMethod: {
-      type: String,
-      enum: Object.values(paymentMethods),
-      default: paymentMethods.cash,
+    tableNumber: {
+      type: Number,
+      required: true,
+      min: [1, "Table number must be at least 1"],
     },
     cashierId: {
       type: mongoose.Schema.Types.ObjectId,
