@@ -20,14 +20,8 @@ export const createInventorySchema = joi.object({
       "number.min": "Minimum limit cannot be negative",
       "any.required": "Minimum limit is required",
     }),
-  costPrice: joi.number().min(0).optional()
-    .messages({
-      "number.min": "Cost price cannot be negative",
-    }),
-  lastRestockTotalCost: joi.number().min(0).optional()
-    .messages({
-      "number.min": "Total cost cannot be negative",
-    }),
+  costPrice: joi.number().min(0).optional(),
+  totalCost: joi.number().min(0).optional(),
 }).required();
 
 export const restockInventorySchema = joi.object({
@@ -64,8 +58,5 @@ export const updateInventorySchema = joi.object({
     .messages({
       "number.min": "Cost price cannot be negative",
     }),
-  lastRestockTotalCost: joi.number().min(0).optional()
-    .messages({
-      "number.min": "Total cost cannot be negative",
-    }),
+  totalCost: joi.number().min(0).optional(),
 }).required();
