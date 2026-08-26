@@ -79,3 +79,41 @@ export const availableFromStock = (inventoryQty, inventoryUnit, cpuBase) => {
   const stockBase = convertToBase(inventoryQty, inventoryUnit);
   return Math.floor(stockBase / cpuBase);
 };
+
+/**
+ * إصلاح نسبة الاستهلاك المفسدة (خطأ ×1000 الشائع):
+ * - 20 كيلو محفوظة بدل 0.02 كيلo (20 جرام)
+ * - 20 محفوظة ككيلo بدل 20 جرام
+ */
+export const repairIngredientInput = (ing, stockBase) => {
+  const out = Number(ing.outputQuantity) > 0 ? Number(ing.outputQuantity) : 1;
+  const unit = String(ing.inputUnit || "KG").toUpperCase();
+  const qty = Number(ing.inputQuantity) || 0;
+
+  if (qty <= 0 || stockBase <= 0) {
+    return { inputQuantity: qty, inputUnit: unit, repaired: false };
+  }
+
+  const availableFor = (q, u) => {
+    const cpu = consumptionPerUnit(q, u, out);
+    return cpu > 0 ? Math.floor(stockBase / cpu) : 0;
+  };
+
+  if (availableFor(qty, unit) > 0) {
+    return { inputQuantity: qty, inputUnit: unit, repaired: false };
+  }
+
+  if (unit === "KG" || unit === "LITER") {
+    const divided = qty / 1000;
+    if (divided >= 0.000001 && availableFor(divided, unit) > 0) {
+      return { inputQuantity: divided, inputUnit: unit, repaired: true };
+    }
+
+    const subUnit = unit === "KG" ? "GRAM" : "ML";
+    if (availableFor(qty, subUnit) > 0) {
+      return { inputQuantity: qty, inputUnit: subUnit, repaired: true };
+    }
+  }
+
+  return { inputQuantity: qty, inputUnit: unit, repaired: false };
+};

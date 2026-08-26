@@ -1,7 +1,7 @@
 import { productModel } from "../../database/model/product.model.js";
 import { categoryModel } from "../../database/model/category.model.js";
 import { recipeModel } from "../../database/model/recipe.model.js";
-import { consumptionPerUnit, convertToBase } from "../../utils/recipe/unitConverter.js";
+import { consumptionPerUnit, convertToBase, repairIngredientInput } from "../../utils/recipe/unitConverter.js";
 import cloudinary from "../../utils/uploadfile/cloudinary.js";
 
 // Helper to upload file buffer to Cloudinary
@@ -20,18 +20,34 @@ const uploadToCloudinary = (fileBuffer, folder = "elfishawy/products") => {
 
 // Calculate available product quantity based on recipe and current inventory
 const calcAvailableByRecipe = async (productId) => {
-  const recipe = await recipeModel.findOne({ product: productId, isActive: true })
+  const recipe = await recipeModel.findOne({ product: productId, isActive: { $ne: false } })
     .populate("ingredients.inventoryItem", "quantity unit");
 
   if (!recipe || recipe.ingredients.length === 0) return null;
 
   let minAvailable = Infinity;
+  let recipeDirty = false;
+
   for (const ing of recipe.ingredients) {
     if (!ing.inventoryItem) continue;
-    const cpu = consumptionPerUnit(ing.inputQuantity, ing.inputUnit, ing.outputQuantity);
+
     const stockBase = convertToBase(ing.inventoryItem.quantity, ing.inventoryItem.unit);
+    const repaired = repairIngredientInput(ing, stockBase);
+
+    if (repaired.repaired) {
+      ing.inputQuantity = repaired.inputQuantity;
+      ing.inputUnit = repaired.inputUnit;
+      recipeDirty = true;
+    }
+
+    const cpu = consumptionPerUnit(repaired.inputQuantity, repaired.inputUnit, ing.outputQuantity || 1);
     const canMake = cpu > 0 ? Math.floor(stockBase / cpu) : Infinity;
     if (canMake < minAvailable) minAvailable = canMake;
+  }
+
+  if (recipeDirty) {
+    recipe.markModified("ingredients");
+    recipe.save().catch(() => {});
   }
 
   return minAvailable === Infinity ? 0 : minAvailable;
@@ -107,6 +123,20 @@ export const listProducts = async (req, res, next) => {
   const enriched = await Promise.all(
     data.map(async (p) => {
       const availableQuantityByRecipe = await calcAvailableByRecipe(p._id);
+
+      // ✅ المنتجات المربوطة بوصفة: الرصيد الفعلي = المحسوب من الخامات
+      if (availableQuantityByRecipe !== null) {
+        const nextInStock = availableQuantityByRecipe > 0;
+        if (p.stockQuantity !== availableQuantityByRecipe || p.inStock !== nextInStock) {
+          await productModel.findByIdAndUpdate(p._id, {
+            stockQuantity: availableQuantityByRecipe,
+            inStock: nextInStock,
+          });
+          p.stockQuantity = availableQuantityByRecipe;
+          p.inStock = nextInStock;
+        }
+      }
+
       return {
         ...p,
         availableQuantityByRecipe,
@@ -162,12 +192,12 @@ export const updateProduct = async (req, res, next) => {
   }
 
   if (stockQuantity !== undefined) {
-    product.stockQuantity = Number(stockQuantity);
+    product.stockQuantity = Math.max(0, Math.floor(Number(stockQuantity) || 0));
     product.inStock = product.stockQuantity > 0;
   }
 
   if (inStock !== undefined) {
-    product.inStock = inStock === "true" || inStock === true;
+    product.inStock = inStock === true || inStock === "true";
   }
 
   if (req.file) {

@@ -62,6 +62,14 @@ export const createItem = async (req, res, next) => {
     .findById(newItem._id)
     .populate("lastRestockedBy", "userName roleType");
 
+  if (qtyNum > 0) {
+    try {
+      await syncProductsForInventoryItem(newItem._id.toString());
+    } catch {
+      // تحسيني
+    }
+  }
+
   return res.status(201).json({
     success: true,
     message: "Inventory item created successfully",

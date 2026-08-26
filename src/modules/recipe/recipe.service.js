@@ -1,7 +1,7 @@
 import { recipeModel } from "../../database/model/recipe.model.js";
 import { productModel } from "../../database/model/product.model.js";
 import { inventoryModel } from "../../database/model/inventory.model.js";
-import { consumptionPerUnit, availableFromStock } from "../../utils/recipe/unitConverter.js";
+import { consumptionPerUnit, availableFromStock, repairIngredientInput, convertToBase } from "../../utils/recipe/unitConverter.js";
 import { syncProductById } from "../../utils/recipe/productStockSync.js";
 
 // =========================== 1) Create Recipe ===========================
@@ -88,13 +88,15 @@ export const getRecipeByProduct = async (req, res, next) => {
   const ingredientDetails = [];
 
   for (const ing of recipe.ingredients) {
-    const cpu = consumptionPerUnit(ing.inputQuantity, ing.inputUnit, ing.outputQuantity);
     const invItem = ing.inventoryItem;
+    const stockBase = convertToBase(invItem.quantity, invItem.unit);
+    const repaired = repairIngredientInput(ing, stockBase);
+    const cpu = consumptionPerUnit(repaired.inputQuantity, repaired.inputUnit, ing.outputQuantity);
     const available = availableFromStock(invItem.quantity, invItem.unit, cpu);
     ingredientDetails.push({
       inventoryItem: invItem,
-      inputQuantity: ing.inputQuantity,
-      inputUnit: ing.inputUnit,
+      inputQuantity: repaired.inputQuantity,
+      inputUnit: repaired.inputUnit,
       outputQuantity: ing.outputQuantity,
       consumptionPerUnitInBase: cpu,
       availableFromThisIngredient: available,

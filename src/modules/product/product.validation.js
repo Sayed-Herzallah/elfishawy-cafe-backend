@@ -39,8 +39,14 @@ export const updateProductSchema = joi.object({
   description: joi.string().max(300).optional(),
   price: joi.number().min(0).optional(),
   category: monggoseID("Category ID").optional(),
-  stockQuantity: joi.number().integer().min(0).optional(),
-  inStock: joi.boolean().optional(),
+  stockQuantity: joi.alternatives().try(
+    joi.number().integer().min(0),
+    joi.string().pattern(/^\d+(\.\d+)?$/)
+  ).optional(),
+  inStock: joi.alternatives().try(
+    joi.boolean(),
+    joi.string().valid("true", "false")
+  ).optional(),
   file: checkFile(mimetypes).optional(),
 }).required();
 

@@ -3,7 +3,7 @@ import { productModel } from "../../database/model/product.model.js";
 import { inventoryModel } from "../../database/model/inventory.model.js";
 import { recipeModel } from "../../database/model/recipe.model.js";
 import { roles } from "../../database/model/user.model.js";
-import { consumptionPerUnit, convertToBase } from "../../utils/recipe/unitConverter.js";
+import { consumptionPerUnit, convertToBase, repairIngredientInput } from "../../utils/recipe/unitConverter.js";
 
 // Convert a base-unit quantity back to a stored unit quantity
 const baseToUnit = (baseQty, unit) => {
@@ -67,7 +67,9 @@ export const createOrder = async (req, res, next) => {
         if (!invItem) {
           return next(new Error(`Ingredient inventory item not found in recipe for product ${item.product}`, { cause: 404 }));
         }
-        const cpu = consumptionPerUnit(ing.inputQuantity, ing.inputUnit, ing.outputQuantity);
+        const stockBase = convertToBase(invItem.quantity, invItem.unit);
+        const repaired = repairIngredientInput(ing, stockBase);
+        const cpu = consumptionPerUnit(repaired.inputQuantity, repaired.inputUnit, ing.outputQuantity);
         const totalConsumptionBase = cpu * item.quantity;
         const currentStockBase = convertToBase(invItem.quantity, invItem.unit);
 
