@@ -2,6 +2,7 @@ import { recipeModel } from "../../database/model/recipe.model.js";
 import { productModel } from "../../database/model/product.model.js";
 import { inventoryModel } from "../../database/model/inventory.model.js";
 import { consumptionPerUnit, availableFromStock } from "../../utils/recipe/unitConverter.js";
+import { syncProductById } from "../../utils/recipe/productStockSync.js";
 
 // =========================== 1) Create Recipe ===========================
 export const createRecipe = async (req, res, next) => {
@@ -22,6 +23,12 @@ export const createRecipe = async (req, res, next) => {
   }
 
   const newRecipe = await recipeModel.create({ product, ingredients, isActive });
+
+  try {
+    await syncProductById(product);
+  } catch {
+    // تحسيني
+  }
 
   const populated = await recipeModel.findById(newRecipe._id)
     .populate("product", "name price")
@@ -126,6 +133,12 @@ export const updateRecipe = async (req, res, next) => {
   if (isActive !== undefined) recipe.isActive = isActive;
 
   await recipe.save();
+
+  try {
+    await syncProductById(recipe.product);
+  } catch {
+    // تحسيني
+  }
 
   const updated = await recipeModel.findById(id)
     .populate("product", "name price")

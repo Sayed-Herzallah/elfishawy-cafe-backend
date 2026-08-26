@@ -1,5 +1,6 @@
 import { inventoryModel } from "../../database/model/inventory.model.js";
 import { expenseModel } from "../../database/model/expense.model.js";
+import { syncProductsForInventoryItem } from "../../utils/recipe/productStockSync.js";
 
 /** تحويل آمن للأرقام — Number(undefined) بيرجع NaN وده اللي كان بيكسر الحسابات */
 const toNumOr = (value, fallback) => {
@@ -124,6 +125,13 @@ export const restockItem = async (req, res, next) => {
   item.lastRestockedBy = req.user._id; // audit trail: who added this stock
   await item.save();
 
+  // 🔄 مزامنة أرصدة المنتجات المرتبطة — المنتج النافذ يفتح تلقائياً بعد التوريد
+  try {
+    await syncProductsForInventoryItem(item._id.toString());
+  } catch {
+    // تحسيني — فشل المزامنة لا يوقف التوريد
+  }
+
   // 🧾 تسجيل التوريد في سجل المشتريات — عشان توريد المدير يظهر هناك باسمه زي الكاشير
   let expenseCreated = true;
   try {
@@ -183,8 +191,6 @@ export const updateItem = async (req, res, next) => {
     item.name = name;
   }
 
-  // ✅ تصحيح الرصيد يدوياً — أدمن فقط (الراوت محمي بـ authorization admin)
-  // بيتسجل مين صلّح الرصيد وامتى في سجل التوريد الأخير للشفافية
   if (quantity !== undefined) {
     item.quantity = toNumOr(quantity, item.quantity);
     item.lastRestocked = new Date();
@@ -217,6 +223,14 @@ export const updateItem = async (req, res, next) => {
     item.lastRestockedBy = req.user._id;
   }
   await item.save();
+
+  if (quantity !== undefined) {
+    try {
+      await syncProductsForInventoryItem(item._id.toString());
+    } catch {
+      // تحسيني
+    }
+  }
 
   const populatedItem = await inventoryModel
     .findById(item._id)

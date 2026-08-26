@@ -1,6 +1,7 @@
 import { expenseModel } from "../../database/model/expense.model.js";
 import { inventoryModel } from "../../database/model/inventory.model.js";
 import { roles } from "../../database/model/user.model.js";
+import { syncProductsForInventoryItem } from "../../utils/recipe/productStockSync.js";
 
 // =========================== 1) Create Expense ===========================
 export const createExpense = async (req, res, next) => {
@@ -35,6 +36,12 @@ export const createExpense = async (req, res, next) => {
       item.lastRestockTotalCost = finalTotalCost;
       item.lastRestocked = date || new Date();
       await item.save();
+
+      try {
+        await syncProductsForInventoryItem(item._id.toString());
+      } catch {
+        // تحسيني
+      }
 
       const newExpense = await expenseModel.create({
         description,
@@ -190,6 +197,12 @@ export const updateExpense = async (req, res, next) => {
       }
       newItem.lastRestocked = date || new Date();
       await newItem.save();
+
+      try {
+        await syncProductsForInventoryItem(newItem._id.toString());
+      } catch {
+        // تحسيني
+      }
     }
 
     // 3. Update expense fields
