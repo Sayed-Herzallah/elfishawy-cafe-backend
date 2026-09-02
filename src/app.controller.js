@@ -8,7 +8,7 @@ import cors from "cors";
 
 // ===================== Import Database & Auth Utils =====================
 import { userModel, roles } from "./database/model/user.model.js";
-import { hashPassword } from "./utils/hashing/hashing.js";
+import { hashPassword, comparePassword } from "./utils/hashing/hashing.js";
 import { encryptPhone } from "./utils/encryption/encryption.js";
 
 // ===================== Import Routers =====================
@@ -59,7 +59,20 @@ const initializeDefaultAccounts = async () => {
     });
     console.log("✅ Admin account created successfully");
   } else {
-    console.log("ℹ️ Admin account already exists, skipping creation");
+    // Sync password if the .env ADMIN_PASSWORD was changed after account creation
+    const isEnvPasswordValid = comparePassword({
+      plainText: process.env.ADMIN_PASSWORD,
+      hashPassword: existingAdmin.password,
+    });
+
+    if (!isEnvPasswordValid) {
+      existingAdmin.password = hashPassword({ plainText: process.env.ADMIN_PASSWORD });
+      existingAdmin.passwordChangedAt = new Date();
+      await existingAdmin.save();
+      console.log("🔄 Admin password synced from .env");
+    } else {
+      console.log("ℹ️ Admin account already exists, skipping creation");
+    }
   }
 
   // Cashier Account
@@ -81,7 +94,20 @@ const initializeDefaultAccounts = async () => {
     });
     console.log("✅ Cashier account created successfully");
   } else {
-    console.log("ℹ️ Cashier account already exists, skipping creation");
+    // Sync password if the .env CASHIER_PASSWORD was changed after account creation
+    const isEnvPasswordValid = comparePassword({
+      plainText: process.env.CASHIER_PASSWORD,
+      hashPassword: existingCashier.password,
+    });
+
+    if (!isEnvPasswordValid) {
+      existingCashier.password = hashPassword({ plainText: process.env.CASHIER_PASSWORD });
+      existingCashier.passwordChangedAt = new Date();
+      await existingCashier.save();
+      console.log("🔄 Cashier password synced from .env");
+    } else {
+      console.log("ℹ️ Cashier account already exists, skipping creation");
+    }
   }
 };
 

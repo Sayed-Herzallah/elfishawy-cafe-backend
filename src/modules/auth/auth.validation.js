@@ -10,7 +10,7 @@ export const loginSchema = joi.object({
       "string.pattern.base": "Invalid email format (must be .com, .net, or .edu)",
       "any.required": "Email is required",
     }),
-  password: joi.string().min(16).pattern(passwordRegex).required()
+  password: joi.string().min(8).pattern(passwordRegex).required()
     .messages({
       "string.empty": "Password is required",
       "string.min": "Password must be at least 8 characters",
