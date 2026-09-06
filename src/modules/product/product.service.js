@@ -25,10 +25,14 @@ const calcAvailableByRecipe = async (productId) => {
 
   if (!recipe || recipe.ingredients.length === 0) return null;
 
+  // الخامات الأساسية فقط هي التي تحدد عدد الأكواب المتاحة (البن أو الشاي)
+  const primaryIngredients = recipe.ingredients.filter((ing) => ing.isPrimary !== false);
+  const targetIngredients = primaryIngredients.length > 0 ? primaryIngredients : recipe.ingredients;
+
   let minAvailable = Infinity;
   let recipeDirty = false;
 
-  for (const ing of recipe.ingredients) {
+  for (const ing of targetIngredients) {
     if (!ing.inventoryItem) continue;
 
     const stockBase = convertToBase(ing.inventoryItem.quantity, ing.inventoryItem.unit);
