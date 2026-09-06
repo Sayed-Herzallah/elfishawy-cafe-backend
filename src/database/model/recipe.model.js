@@ -27,6 +27,10 @@ const ingredientSchema = new mongoose.Schema(
       required: [true, "Output quantity (cups/servings produced) is required"],
       min: [1, "Output quantity must be at least 1"],
     },
+    isPrimary: {
+      type: Boolean,
+      default: true,
+    },
   },
   { _id: true }
 );

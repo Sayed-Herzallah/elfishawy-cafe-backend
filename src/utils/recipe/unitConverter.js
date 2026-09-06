@@ -12,6 +12,7 @@ export const UNITS = {
   LITER: "LITER",
   ML: "ML",
   PIECE: "PIECE",
+  SPOON: "SPOON",
 };
 
 const CONVERSION_TO_BASE = {
@@ -20,6 +21,7 @@ const CONVERSION_TO_BASE = {
   LITER: 1000,
   ML: 1,
   PIECE: 1,
+  SPOON: 5,
 };
 
 const BASE_UNIT = {
@@ -28,11 +30,13 @@ const BASE_UNIT = {
   LITER: "ML",
   ML: "ML",
   PIECE: "PIECE",
+  SPOON: "GRAM",
 };
 
 /**
  * Convert a quantity from a given unit to its base unit.
  * e.g. convertToBase(1, 'KG') → 1000 (GRAM)
+ * e.g. convertToBase(2, 'SPOON') → 10 (GRAM)
  */
 export const convertToBase = (quantity, unit) => {
   const factor = CONVERSION_TO_BASE[unit.toUpperCase()];
@@ -43,6 +47,7 @@ export const convertToBase = (quantity, unit) => {
 /**
  * Get the base unit for a given unit.
  * e.g. getBaseUnit('KG') → 'GRAM'
+ * e.g. getBaseUnit('SPOON') → 'GRAM'
  */
 export const getBaseUnit = (unit) => {
   const base = BASE_UNIT[unit.toUpperCase()];
@@ -53,6 +58,7 @@ export const getBaseUnit = (unit) => {
 /**
  * Check if two units share the same base unit (are compatible).
  * e.g. isCompatible('KG', 'GRAM') → true
+ * e.g. isCompatible('KG', 'SPOON') → true
  * e.g. isCompatible('KG', 'LITER') → false
  */
 export const isCompatible = (unitA, unitB) => {
@@ -63,6 +69,7 @@ export const isCompatible = (unitA, unitB) => {
  * Calculate grams/ml/pieces consumed per unit sold.
  * Formula: convertToBase(inputQuantity, inputUnit) / outputQuantity
  * e.g. consumptionPerUnit(1, 'KG', 200) → 5 GRAM per cup
+ * e.g. consumptionPerUnit(2, 'SPOON', 1) → 10 GRAM per cup
  */
 export const consumptionPerUnit = (inputQuantity, inputUnit, outputQuantity) => {
   const baseInputQty = convertToBase(inputQuantity, inputUnit);
@@ -82,8 +89,8 @@ export const availableFromStock = (inventoryQty, inventoryUnit, cpuBase) => {
 
 /**
  * إصلاح نسبة الاستهلاك المفسدة (خطأ ×1000 الشائع):
- * - 20 كيلو محفوظة بدل 0.02 كيلo (20 جرام)
- * - 20 محفوظة ككيلo بدل 20 جرام
+ * - 2 أو 10 أو 20 كجم للكوب الواحد مستحيل في المشروبات (المقصود جرامات أو معالق)
+ * - 20 كجم محفوظة كـ KG بدل 20 جرام
  */
 export const repairIngredientInput = (ing, stockBase) => {
   const out = Number(ing.outputQuantity) > 0 ? Number(ing.outputQuantity) : 1;
@@ -92,6 +99,13 @@ export const repairIngredientInput = (ing, stockBase) => {
 
   if (qty <= 0 || stockBase <= 0) {
     return { inputQuantity: qty, inputUnit: unit, repaired: false };
+  }
+
+  // 1) كشف خطأ الكيلوجرام/اللتر الصريح: مستحيل كوباية قهوة أو شاي تستهلك >= 0.25 كجم أو لتر
+  // إذا كانت الكمية >= 0.25 والوحدة كجم/لتر والخرج كوب واحد (أو صغير)، فالمستخدم قصد جرامات
+  if ((unit === "KG" || unit === "LITER") && out <= 1 && qty >= 0.25) {
+    const subUnit = unit === "KG" ? "GRAM" : "ML";
+    return { inputQuantity: qty, inputUnit: subUnit, repaired: true };
   }
 
   const availableFor = (q, u) => {

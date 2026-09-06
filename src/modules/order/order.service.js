@@ -13,6 +13,7 @@ const baseToUnit = (baseQty, unit) => {
   if (u === "LITER") return baseQty / 1000;
   if (u === "ML") return baseQty;
   if (u === "PIECE") return baseQty;
+  if (u === "SPOON") return baseQty / 5;
   return baseQty; // fallback
 };
 
@@ -73,10 +74,12 @@ export const createOrder = async (req, res, next) => {
         const totalConsumptionBase = cpu * item.quantity;
         const currentStockBase = convertToBase(invItem.quantity, invItem.unit);
 
-        if (currentStockBase < totalConsumptionBase) {
+        const isPrimary = ing.isPrimary !== false;
+
+        if (isPrimary && currentStockBase < totalConsumptionBase) {
           const canMake = Math.floor(currentStockBase / cpu);
           return next(new Error(
-            `Insufficient inventory for "${invItem.name}". Available quantity: ${canMake} cups.`,
+            `رصيد خامة "${invItem.name}" غير كافٍ. الكمية المتاحة تكفي ${canMake} كوب فقط.`,
             { cause: 400 }
           ));
         }
@@ -87,24 +90,27 @@ export const createOrder = async (req, res, next) => {
         );
         if (existing) {
           existing.consumptionBase += totalConsumptionBase;
+          if (isPrimary) existing.isPrimary = true;
         } else {
           inventoryDeductions.push({
             inventoryId: invItem._id,
             currentQuantity: invItem.quantity,
             currentUnit: invItem.unit,
             consumptionBase: totalConsumptionBase,
+            isPrimary,
           });
         }
       }
     }
 
-    // Re-validate merged deductions for shared ingredients
+    // Re-validate merged deductions for shared ingredients (PRIMARY only)
     for (const ded of inventoryDeductions) {
+      if (!ded.isPrimary) continue;
       const currentStockBase = convertToBase(ded.currentQuantity, ded.currentUnit);
       if (currentStockBase < ded.consumptionBase) {
         const invItem = await inventoryModel.findById(ded.inventoryId);
         return next(new Error(
-          `Insufficient combined inventory for "${invItem?.name}". Cannot fulfil total order.`,
+          `رصيد خامة "${invItem?.name}" غير كافٍ لتغطية إجمالي الطلب.`,
           { cause: 400 }
         ));
       }
@@ -283,11 +289,13 @@ export const updateOrderStatus = async (req, res, next) => {
       if (!recipe) continue;
 
       for (const ing of recipe.ingredients) {
-        const cpu = consumptionPerUnit(ing.inputQuantity, ing.inputUnit, ing.outputQuantity);
-        const totalConsumptionBase = cpu * item.quantity;
-
         const invItem = await inventoryModel.findById(ing.inventoryItem);
         if (!invItem) continue;
+
+        const stockBase = convertToBase(invItem.quantity, invItem.unit);
+        const repaired = repairIngredientInput(ing, stockBase);
+        const cpu = consumptionPerUnit(repaired.inputQuantity, repaired.inputUnit, ing.outputQuantity);
+        const totalConsumptionBase = cpu * item.quantity;
 
         const currentStockBase = convertToBase(invItem.quantity, invItem.unit);
         const restoredBase = currentStockBase + totalConsumptionBase;
@@ -401,15 +409,19 @@ export const updateOrder = async (req, res, next) => {
           await restoreOrderQuantities(order);
           return next(new Error(`Ingredient inventory item not found in recipe for product ${item.product}`, { cause: 404 }));
         }
-        const cpu = consumptionPerUnit(ing.inputQuantity, ing.inputUnit, ing.outputQuantity);
+        const stockBase = convertToBase(invItem.quantity, invItem.unit);
+        const repaired = repairIngredientInput(ing, stockBase);
+        const cpu = consumptionPerUnit(repaired.inputQuantity, repaired.inputUnit, ing.outputQuantity);
         const totalConsumptionBase = cpu * item.quantity;
         const currentStockBase = convertToBase(invItem.quantity, invItem.unit);
 
-        if (currentStockBase < totalConsumptionBase) {
+        const isPrimary = ing.isPrimary !== false;
+
+        if (isPrimary && currentStockBase < totalConsumptionBase) {
           await restoreOrderQuantities(order);
           const canMake = Math.floor(currentStockBase / cpu);
           return next(new Error(
-            `Insufficient inventory for "${invItem.name}". Available quantity: ${canMake} cups.`,
+            `رصيد خامة "${invItem.name}" غير كافٍ. الكمية المتاحة تكفي ${canMake} كوب فقط.`,
             { cause: 400 }
           ));
         }
@@ -419,25 +431,28 @@ export const updateOrder = async (req, res, next) => {
         );
         if (existing) {
           existing.consumptionBase += totalConsumptionBase;
+          if (isPrimary) existing.isPrimary = true;
         } else {
           inventoryDeductions.push({
             inventoryId: invItem._id,
             currentQuantity: invItem.quantity,
             currentUnit: invItem.unit,
             consumptionBase: totalConsumptionBase,
+            isPrimary,
           });
         }
       }
     }
 
-    // Re-validate merged deductions for shared ingredients
+    // Re-validate merged deductions for shared ingredients (PRIMARY only)
     for (const ded of inventoryDeductions) {
+      if (!ded.isPrimary) continue;
       const currentStockBase = convertToBase(ded.currentQuantity, ded.currentUnit);
       if (currentStockBase < ded.consumptionBase) {
         await restoreOrderQuantities(order);
         const invItem = await inventoryModel.findById(ded.inventoryId);
         return next(new Error(
-          `Insufficient combined inventory for "${invItem?.name}". Cannot fulfil total order.`,
+          `رصيد خامة "${invItem?.name}" غير كافٍ لتغطية إجمالي الطلب.`,
           { cause: 400 }
         ));
       }
@@ -498,10 +513,12 @@ const restoreOrderQuantities = async (order) => {
     const recipe = await recipeModel.findOne({ product: item.product, isActive: true });
     if (recipe) {
       for (const ing of recipe.ingredients) {
-        const cpu = consumptionPerUnit(ing.inputQuantity, ing.inputUnit, ing.outputQuantity);
-        const totalConsumptionBase = cpu * item.quantity;
         const invItem = await inventoryModel.findById(ing.inventoryItem);
         if (invItem) {
+          const stockBase = convertToBase(invItem.quantity, invItem.unit);
+          const repaired = repairIngredientInput(ing, stockBase);
+          const cpu = consumptionPerUnit(repaired.inputQuantity, repaired.inputUnit, ing.outputQuantity);
+          const totalConsumptionBase = cpu * item.quantity;
           const currentStockBase = convertToBase(invItem.quantity, invItem.unit);
           const restoredBase = Math.max(0, currentStockBase - totalConsumptionBase);
           const restoredQty = baseToUnit(restoredBase, invItem.unit);

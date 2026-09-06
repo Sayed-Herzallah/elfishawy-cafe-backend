@@ -19,6 +19,7 @@ const ingredientSchema = joi.object({
       "number.min": "Output quantity must be at least 1",
       "any.required": "Output quantity is required",
     }),
+  isPrimary: joi.boolean().optional(),
 });
 
 export const createRecipeSchema = joi.object({

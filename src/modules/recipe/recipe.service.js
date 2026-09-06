@@ -86,6 +86,8 @@ export const getRecipeByProduct = async (req, res, next) => {
   // Calculate available quantity from stock
   let availableQty = Infinity;
   const ingredientDetails = [];
+  const primaryIngredients = recipe.ingredients.filter((ing) => ing.isPrimary !== false);
+  const usePrimaryOnly = primaryIngredients.length > 0;
 
   for (const ing of recipe.ingredients) {
     const invItem = ing.inventoryItem;
@@ -93,15 +95,21 @@ export const getRecipeByProduct = async (req, res, next) => {
     const repaired = repairIngredientInput(ing, stockBase);
     const cpu = consumptionPerUnit(repaired.inputQuantity, repaired.inputUnit, ing.outputQuantity);
     const available = availableFromStock(invItem.quantity, invItem.unit, cpu);
+    const isPrimary = ing.isPrimary !== false;
+
     ingredientDetails.push({
       inventoryItem: invItem,
       inputQuantity: repaired.inputQuantity,
       inputUnit: repaired.inputUnit,
       outputQuantity: ing.outputQuantity,
+      isPrimary,
       consumptionPerUnitInBase: cpu,
       availableFromThisIngredient: available,
     });
-    if (available < availableQty) availableQty = available;
+
+    if ((!usePrimaryOnly || isPrimary) && available < availableQty) {
+      availableQty = available;
+    }
   }
 
   return res.status(200).json({

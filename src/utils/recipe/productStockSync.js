@@ -31,10 +31,15 @@ const resolveInventoryItem = (invRef, inventoryById) => {
 export const calcAvailableFromRecipe = (recipe, inventoryById, { persistRepair = false } = {}) => {
   if (!recipe?.ingredients?.length) return null;
 
+  // الخامات الأساسية فقط هي التي تحدد سقف الأكواب للمنتج (مثل البن للقهوة أو الشاي للشاي).
+  // الخامات المساعدة (مثل السكر) تُخصم عند البيع ولا تقيّد عدد الأكواب المتاحة.
+  const primaryIngredients = recipe.ingredients.filter((ing) => ing.isPrimary !== false);
+  const targetIngredients = primaryIngredients.length > 0 ? primaryIngredients : recipe.ingredients;
+
   let minAvailable = Infinity;
   let recipeDirty = false;
 
-  for (const ing of recipe.ingredients) {
+  for (const ing of targetIngredients) {
     const { item: invItem } = resolveInventoryItem(ing.inventoryItem, inventoryById);
     if (!invItem || isStockOut(invItem.quantity)) return 0;
 
@@ -54,6 +59,22 @@ export const calcAvailableFromRecipe = (recipe, inventoryById, { persistRepair =
     );
     const available = cpu > 0 ? Math.floor(stockBase / cpu) : Infinity;
     minAvailable = Math.min(minAvailable, available);
+  }
+
+  // نقوم أيضاً بإصلاح أي بيانات قديمة مفسدة في الخامات التكميلية
+  if (persistRepair) {
+    for (const ing of recipe.ingredients) {
+      if (targetIngredients.includes(ing)) continue;
+      const { item: invItem } = resolveInventoryItem(ing.inventoryItem, inventoryById);
+      if (!invItem) continue;
+      const stockBase = convertToBase(invItem.quantity, invItem.unit);
+      const repaired = repairIngredientInput(ing, stockBase);
+      if (repaired.repaired) {
+        ing.inputQuantity = repaired.inputQuantity;
+        ing.inputUnit = repaired.inputUnit;
+        recipeDirty = true;
+      }
+    }
   }
 
   if (persistRepair && recipeDirty && typeof recipe.save === "function") {
