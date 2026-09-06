@@ -112,6 +112,15 @@ export const getRecipeByProduct = async (req, res, next) => {
     }
   }
 
+  // الخامات الثانوية التي نفذت (لا تؤثر على عدد الأكواب لكن تظهر كتحذير للإدارة)
+  const depletedSecondary = ingredientDetails
+    .filter((d) => !d.isPrimary && d.availableFromThisIngredient <= 0)
+    .map((d) => ({
+      name: d.inventoryItem.name,
+      unit: d.inventoryItem.unit,
+      currentStock: d.inventoryItem.quantity,
+    }));
+
   return res.status(200).json({
     success: true,
     message: "Recipe retrieved successfully",
@@ -119,6 +128,7 @@ export const getRecipeByProduct = async (req, res, next) => {
       recipe,
       availableProductQty: availableQty === Infinity ? 0 : availableQty,
       ingredientDetails,
+      depletedSecondary,
     },
   });
 };
