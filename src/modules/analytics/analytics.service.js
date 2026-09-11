@@ -61,7 +61,7 @@ export const getCharts = async (req, res, next) => {
       },
       {
         $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt", timezone: "Africa/Cairo" } },
           totalSales: { $sum: "$totalAmount" },
           ordersCount: { $sum: 1 },
         },
@@ -92,8 +92,6 @@ export const getCharts = async (req, res, next) => {
           revenueGenerated: { $sum: { $multiply: ["$items.quantity", "$items.price"] } },
         },
       },
-      { $sort: { quantitySold: -1 } },
-      { $limit: 5 },
       {
         $lookup: {
           from: "Product_Data",
@@ -103,6 +101,8 @@ export const getCharts = async (req, res, next) => {
         },
       },
       { $unwind: "$productDetails" },
+      { $sort: { quantitySold: -1 } },
+      { $limit: 5 },
       {
         $project: {
           _id: 1,
