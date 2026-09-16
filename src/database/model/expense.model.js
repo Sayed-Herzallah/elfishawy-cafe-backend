@@ -57,6 +57,12 @@ const expenseSchema = new mongoose.Schema(
       ref: "User_Data",
       required: true,
     },
+    clientExpenseId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
+    },
   },
   {
     timestamps: true,

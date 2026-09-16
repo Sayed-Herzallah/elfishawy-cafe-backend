@@ -56,6 +56,12 @@ const orderSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    clientOrderId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
+    },
   },
   {
     timestamps: true,

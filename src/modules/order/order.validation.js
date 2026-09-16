@@ -17,6 +17,7 @@ export const createOrderSchema = joi.object({
       "any.required": "Table number is required",
     }),
   notes: joi.string().allow("").optional(),
+  clientOrderId: joi.string().allow("").optional(),
 }).required();
 
 export const updateOrderStatusSchema = joi.object({

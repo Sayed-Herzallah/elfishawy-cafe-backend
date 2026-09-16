@@ -5,8 +5,22 @@ import { syncProductsForInventoryItem } from "../../utils/recipe/productStockSyn
 
 // =========================== 1) Create Expense ===========================
 export const createExpense = async (req, res, next) => {
-  const { description, amount, category, inventoryItemLinked, inventoryQuantityAdded, totalCost, unitCost, date } = req.body;
+  const { description, amount, category, inventoryItemLinked, inventoryQuantityAdded, totalCost, unitCost, date, clientExpenseId } = req.body;
   const addedBy = req.user._id;
+
+  // Idempotency check: if expense was already synced from offline queue, return it
+  if (clientExpenseId) {
+    const existingSync = await expenseModel.findOne({ clientExpenseId })
+      .populate("inventoryItemLinked", "name unit lastRestockTotalCost")
+      .populate("addedBy", "userName email");
+    if (existingSync) {
+      return res.status(200).json({
+        success: true,
+        message: "Expense already synced",
+        data: existingSync,
+      });
+    }
+  }
 
   // Anti-theft rule: a cashier may only log "inventory" expenses (e.g. buying
   // supplies on the spot). Categories like "salaries" or "rent" are business
@@ -52,6 +66,7 @@ export const createExpense = async (req, res, next) => {
         unitCost: finalUnitCost,
         date: date || new Date(),
         addedBy,
+        clientExpenseId: clientExpenseId || undefined,
       });
 
       const expenseData = await expenseModel.findById(newExpense._id)

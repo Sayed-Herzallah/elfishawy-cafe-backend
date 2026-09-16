@@ -42,6 +42,7 @@ export const createExpenseSchema = joi.object({
       "number.min": "Unit cost cannot be negative",
     }),
   date: joi.date().optional(),
+  clientExpenseId: joi.string().allow("").optional(),
 }).required();
 
 export const deleteExpenseSchema = joi.object({

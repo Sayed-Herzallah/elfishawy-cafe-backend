@@ -19,8 +19,22 @@ const baseToUnit = (baseQty, unit) => {
 
 // =========================== 1) Create Order ===========================
 export const createOrder = async (req, res, next) => {
-  const { items, tableNumber, notes } = req.body;
+  const { items, tableNumber, notes, clientOrderId } = req.body;
   const cashierId = req.user._id;
+
+  // Idempotency check: if order was already synced from offline queue, return it
+  if (clientOrderId) {
+    const existingSync = await orderModel.findOne({ clientOrderId })
+      .populate("items.product", "name price image")
+      .populate("cashierId", "userName email");
+    if (existingSync) {
+      return res.status(200).json({
+        success: true,
+        message: "Order already synced",
+        data: existingSync,
+      });
+    }
+  }
 
   let calculatedTotal = 0;
   const processedItems = [];
@@ -147,6 +161,7 @@ export const createOrder = async (req, res, next) => {
           cashierId,
           status: orderStatuses.completed,
           notes: notes || "",
+          clientOrderId: clientOrderId || undefined,
         });
       } catch (err) {
         // If duplicate key error on orderNumber, retry with next sequence
