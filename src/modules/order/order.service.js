@@ -130,21 +130,34 @@ export const createOrder = async (req, res, next) => {
       }
     }
 
-    // ===== PHASE 3: Generate Order Number (Sequential starting from 1) =====
+    // ===== PHASE 3: Generate Order Number (Sequential, Race-safe) =====
     const generateOrderNumber = async () => {
-      const latestOrder = await orderModel.findOne({
-        orderNumber: { $regex: "^[0-9]{1,6}$" }
-      }).sort({ createdAt: -1 });
+      // نستخدم aggregate MAX بدل sort(createdAt) لأن فواتير الأوفلاين المتزامنة
+      // قد تحمل createdAt قديماً مع رقم مؤقت كبير → sort الزمن يرجع رقماً خاطئاً.
+      // MAX على الرقم كـ integer يضمن دائماً البدء من أعلى رقم فعلي في القاعدة.
+      const result = await orderModel.aggregate([
+        {
+          $match: {
+            orderNumber: { $regex: "^[0-9]{1,6}$" },
+          },
+        },
+        {
+          $addFields: {
+            orderNumberInt: { $toInt: "$orderNumber" },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            maxOrderNumber: { $max: "$orderNumberInt" },
+          },
+        },
+      ]);
 
-      let nextSequence = 1;
-      if (latestOrder && latestOrder.orderNumber) {
-        const lastNum = parseInt(latestOrder.orderNumber, 10);
-        if (!isNaN(lastNum)) {
-          nextSequence = lastNum + 1;
-        }
-      }
-      return String(nextSequence);
+      const maxNum = result.length > 0 ? (result[0].maxOrderNumber || 0) : 0;
+      return String(maxNum + 1);
     };
+
 
     // ===== PHASE 4: Create Order (with retry on duplicate orderNumber) =====
     let newOrder = null;
