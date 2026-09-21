@@ -10,8 +10,13 @@ const orderSchema = new mongoose.Schema(
   {
     orderNumber: {
       type: String,
-      unique: true,
       required: true,
+    },
+    // مفتاح اليوم التجاري "YYYY-MM-DD" بتوقيت القاهرة — أساس الترقيم اليومي الموحد
+    dayKey: {
+      type: String,
+      default: null,
+      index: true,
     },
     items: [
       {
@@ -68,5 +73,9 @@ const orderSchema = new mongoose.Schema(
     collection: "Order_Data",
   }
 );
+
+// الرقم فريد داخل نفس اليوم التجاري فقط — يتكرر يومياً بأمان (يبدأ من 1 كل يوم).
+// الفواتير القديمة (قبل الترحيل) بدون dayKey → لا تعارض مع الفواتير الجديدة.
+orderSchema.index({ dayKey: 1, orderNumber: 1 }, { unique: true });
 
 export const orderModel = mongoose.model("Order_Data", orderSchema);

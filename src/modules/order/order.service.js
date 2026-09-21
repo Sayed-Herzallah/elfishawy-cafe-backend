@@ -1,8 +1,10 @@
 import { orderModel, orderStatuses } from "../../database/model/order.model.js";
+import { invoiceCounterModel } from "../../database/model/invoiceCounter.model.js";
 import { productModel } from "../../database/model/product.model.js";
 import { inventoryModel } from "../../database/model/inventory.model.js";
 import { recipeModel } from "../../database/model/recipe.model.js";
 import { roles } from "../../database/model/user.model.js";
+import { getBusinessDayKey, getBusinessDayRange } from "../../utils/businessDay.js";
 import { consumptionPerUnit, convertToBase, repairIngredientInput } from "../../utils/recipe/unitConverter.js";
 
 // Convert a base-unit quantity back to a stored unit quantity
@@ -130,51 +132,83 @@ export const createOrder = async (req, res, next) => {
       }
     }
 
-    // ===== PHASE 3: Generate Order Number (Sequential, Race-safe, Daily Reset) =====
-    const generateOrderNumber = async () => {
-      // نُولّد رقم الفاتورة بناءً على فواتير اليوم الحالي فقط.
-      // كل يوم يبدأ الترقيم من 1 من جديد — لا علاقة بأرقام أمس أو أي يوم سابق.
-      // نستخدم aggregate MAX (وليس sort) لأن فواتير الأوفلاين المتزامنة
-      // قد تحمل createdAt قديماً → MAX على الرقم يضمن دائماً أعلى رقم فعلي لهذا اليوم.
-      const startOfDay = new Date();
-      startOfDay.setHours(0, 0, 0, 0);
-      const endOfDay = new Date();
-      endOfDay.setHours(23, 59, 59, 999);
+    // ===== PHASE 3: Generate Order Number (Atomic Daily Counter — Cairo Business Day) =====
+    // الحل الجذري للترقيم اليومي:
+    // 1) dayKey = اليوم التقويمي بتوقيت القاهرة (Africa/Cairo) — موحّد للسيرفر والويب والديسكتوب
+    //    مهما كان timezone السيرفر (UTC على السحابة سابقاً كان يخرب حدود اليوم).
+    // 2) الترقيم من عداد ذري لكل يوم (Invoice_Counter) عبر findOneAndUpdate + $inc
+    //    → تسلسلي، Race-safe، ويبدأ من 1 تلقائياً مع أول فاتورة في كل يوم.
+    // 3) الفهرس الفريد بقى مركب { dayKey, orderNumber } — نفس الرقم يتكرر كل يوم بأمان.
+    const dayKey = getBusinessDayKey();
 
+    // أعلى رقم فعلي مسجَّل لهذا اليوم (يشمل فواتير ما قبل الترحيل التي ليس لديها dayKey
+    // لكن createdAt يقع ضمن اليوم التجاري بتوقيت القاهرة)
+    const getMaxNumericForDay = async () => {
+      const { start, end } = getBusinessDayRange(dayKey);
       const result = await orderModel.aggregate([
         {
           $match: {
             orderNumber: { $regex: "^[0-9]{1,6}$" },
-            createdAt: { $gte: startOfDay, $lte: endOfDay },
+            $or: [{ dayKey }, { dayKey: null, createdAt: { $gte: start, $lte: end } }],
           },
         },
-        {
-          $addFields: {
-            orderNumberInt: { $toInt: "$orderNumber" },
-          },
-        },
-        {
-          $group: {
-            _id: null,
-            maxOrderNumber: { $max: "$orderNumberInt" },
-          },
-        },
+        { $addFields: { orderNumberInt: { $toInt: "$orderNumber" } } },
+        { $group: { _id: null, maxNum: { $max: "$orderNumberInt" } } },
       ]);
-
-      const maxNum = result.length > 0 ? (result[0].maxOrderNumber || 0) : 0;
-      return String(maxNum + 1);
+      return result.length > 0 ? result[0].maxNum || 0 : 0;
     };
 
+    // تصحيح العداد ليطابق أعلى رقم فعلي لليوم (حماية من استرجاع نسخة قديمة من القاعدة)
+    const correctCounterToMax = async () => {
+      try {
+        const maxNum = await getMaxNumericForDay();
+        if (maxNum > 0) {
+          await invoiceCounterModel.updateOne(
+            { _id: `invoice_${dayKey}` },
+            { $max: { seq: maxNum } },
+            { upsert: true }
+          );
+        }
+      } catch {
+        /* تجاهل — العداد يظل يعمل بقيمه الحالية */
+      }
+    };
 
-    // ===== PHASE 4: Create Order (with retry on duplicate orderNumber) =====
+    // بذرة أول يوم: لو العداد لسه غير موجود، ابدأه من أعلى رقم موجود فعلاً
+    // لنفس اليوم التجاري (حتى لا تتكرر أرقام فواتير أُنشئت قبل التحديث)
+    try {
+      const existingCounter = await invoiceCounterModel.findById(`invoice_${dayKey}`);
+      if (!existingCounter) {
+        await correctCounterToMax();
+      }
+    } catch {
+      /* تجاهل — التخصيص العادي سيستمر */
+    }
+
+    // ===== PHASE 4: Create Order (atomic allocation + self-healing retry) =====
     let newOrder = null;
     let attempts = 0;
     while (!newOrder && attempts < 5) {
       attempts++;
-      const orderNumber = await generateOrderNumber();
+      let orderNumber = null;
+      try {
+        // تخصيص ذري: زوّد العداد وخذ القيمة الجديدة في عملية واحدة
+        const counter = await invoiceCounterModel.findOneAndUpdate(
+          { _id: `invoice_${dayKey}` },
+          { $inc: { seq: 1 } },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+        orderNumber = String(counter?.seq || attempts);
+      } catch {
+        // fallback نادر: لو فشل العداد نستخدم أعلى رقم اليوم + المحاولة الحالية
+        const maxNum = await getMaxNumericForDay();
+        orderNumber = String(maxNum + attempts);
+      }
+
       try {
         newOrder = await orderModel.create({
           orderNumber,
+          dayKey,
           items: processedItems,
           totalAmount: calculatedTotal,
           tableNumber,
@@ -184,8 +218,9 @@ export const createOrder = async (req, res, next) => {
           clientOrderId: clientOrderId || undefined,
         });
       } catch (err) {
-        // If duplicate key error on orderNumber, retry with next sequence
-        if (err.code === 11000 && err.keyPattern?.orderNumber) {
+        // تعارض نادر في الرقم (مثلاً بعد استرجاع نسخة قديمة) → صحّح العداد وأعد المحاولة
+        if (err.code === 11000) {
+          await correctCounterToMax();
           continue;
         }
         throw err;
