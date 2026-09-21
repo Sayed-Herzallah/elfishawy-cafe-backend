@@ -1,25 +1,61 @@
 import { orderModel, orderStatuses } from "../../database/model/order.model.js";
 import { expenseModel } from "../../database/model/expense.model.js";
 import { inventoryModel } from "../../database/model/inventory.model.js";
+import { getBusinessDayKey, getBusinessDayRange } from "../../utils/businessDay.js";
+
+/**
+ * F2: بناء نطاق زمني اختياري من from/to (أيام تجارية بتوقيت القاهرة).
+ * بدون params → يرجع null ويبقى السلوك القديم الكامل (backward-compatible).
+ */
+const buildPeriodRanges = (query) => {
+  const { from, to } = query || {};
+  if (!from && !to) return { createdAtRange: null, expenseDateRange: null };
+  let createdAtRange = {};
+  let expenseDateRange = {};
+  if (from) {
+    const { start } = getBusinessDayRange(getBusinessDayKey(new Date(from)));
+    createdAtRange.$gte = start;
+    expenseDateRange.$gte = start;
+  }
+  if (to) {
+    const { end } = getBusinessDayRange(getBusinessDayKey(new Date(to)));
+    createdAtRange.$lte = end;
+    expenseDateRange.$lte = end;
+  }
+  return { createdAtRange, expenseDateRange };
+};
 
 // =========================== 1) Get KPIs / Stats ===========================
 export const getStats = async (req, res, next) => {
   try {
+    const { createdAtRange, expenseDateRange } = buildPeriodRanges(req.query);
+
     // 1. Total Sales Revenue
     const salesAgg = await orderModel.aggregate([
-      { $match: { status: orderStatuses.completed } },
+      { $match: { status: orderStatuses.completed, ...(createdAtRange ? { createdAt: createdAtRange } : {}) } },
       { $group: { _id: null, total: { $sum: "$totalAmount" } } },
     ]);
     const totalSales = salesAgg[0]?.total || 0;
 
     // 2. Completed Orders Count
-    const totalOrdersCount = await orderModel.countDocuments({ status: orderStatuses.completed });
+    const totalOrdersCount = await orderModel.countDocuments({
+      status: orderStatuses.completed,
+      ...(createdAtRange ? { createdAt: createdAtRange } : {}),
+    });
 
-    // 3. Total Expenses
+    // 3. Total Expenses (حقل date هو التاريخ التجاري للمصروف)
     const expensesAgg = await expenseModel.aggregate([
+      { $match: { ...(expenseDateRange ? { date: expenseDateRange } : {}) } },
       { $group: { _id: null, total: { $sum: "$amount" } } },
     ]);
     const totalExpenses = expensesAgg[0]?.total || 0;
+
+    // 3.1 مشتريات المخزن (فئة inventory) — لفصل التشغيلية عن المشتريات في الـ Dashboard
+    const purchasesAgg = await expenseModel.aggregate([
+      { $match: { category: "inventory", ...(expenseDateRange ? { date: expenseDateRange } : {}) } },
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+    ]);
+    const totalPurchases = purchasesAgg[0]?.total || 0;
 
     // 4. Net Profit
     const netProfit = totalSales - totalExpenses;
@@ -36,6 +72,7 @@ export const getStats = async (req, res, next) => {
         totalSales,
         totalOrdersCount,
         totalExpenses,
+        totalPurchases,
         netProfit,
         lowStockCount,
       },
@@ -48,6 +85,8 @@ export const getStats = async (req, res, next) => {
 // =========================== 2) Get Charts Data ===========================
 export const getCharts = async (req, res, next) => {
   try {
+    const { createdAtRange, expenseDateRange } = buildPeriodRanges(req.query);
+
     // 1. Sales Trend over the last 30 days
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -56,7 +95,7 @@ export const getCharts = async (req, res, next) => {
       {
         $match: {
           status: orderStatuses.completed,
-          createdAt: { $gte: thirtyDaysAgo },
+          createdAt: { $gte: thirtyDaysAgo, ...(createdAtRange || {}) },
         },
       },
       {
@@ -72,6 +111,9 @@ export const getCharts = async (req, res, next) => {
     // 2. Expense breakdown by category
     const expenseBreakdown = await expenseModel.aggregate([
       {
+        $match: { ...(expenseDateRange ? { date: expenseDateRange } : {}) },
+      },
+      {
         $group: {
           _id: "$category",
           totalAmount: { $sum: "$amount" },
@@ -83,7 +125,7 @@ export const getCharts = async (req, res, next) => {
 
     // 3. Top 5 Best-Selling Products
     const topProducts = await orderModel.aggregate([
-      { $match: { status: orderStatuses.completed } },
+      { $match: { status: orderStatuses.completed, ...(createdAtRange ? { createdAt: createdAtRange } : {}) } },
       { $unwind: "$items" },
       {
         $group: {

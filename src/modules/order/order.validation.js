@@ -6,6 +6,8 @@ export const createOrderSchema = joi.object({
     joi.object({
       product: monggoseID("Product ID").required(),
       quantity: joi.number().integer().min(1).required(),
+      // F5: سعر البيع الفعلي وقت إنشاء الفاتورة الأوفلاين (اختياري — Online يظل بدون)
+      price: joi.number().min(0).optional(),
     }).required()
   ).min(1).required()
     .messages({
@@ -18,6 +20,8 @@ export const createOrderSchema = joi.object({
     }),
   notes: joi.string().allow("").optional(),
   clientOrderId: joi.string().allow("").optional(),
+  // F4: وقت الإنشاء الأصلي للفاتورة الأوفلاين المتزامنة (اختياري — يُقبل مع clientOrderId فقط)
+  clientCreatedAt: joi.date().optional(),
 }).required();
 
 export const updateOrderStatusSchema = joi.object({

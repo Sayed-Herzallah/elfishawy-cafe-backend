@@ -21,8 +21,21 @@ const baseToUnit = (baseQty, unit) => {
 
 // =========================== 1) Create Order ===========================
 export const createOrder = async (req, res, next) => {
-  const { items, tableNumber, notes, clientOrderId } = req.body;
+  const { items, tableNumber, notes, clientOrderId, clientCreatedAt } = req.body;
   const cashierId = req.user._id;
+
+  // F4: الحفاظ على وقت الإنشاء الأصلي لفواتير الأوفلاين المتزامنة فقط.
+  // - يُقبل clientCreatedAt فقط عند وجود clientOrderId (مسار المزامنة الأوفلاين)
+  // - يُرفض أي تاريخ مستقبلي (هامش 5 دقائق لفروق الساعات) لمنع التلاعب
+  // - createdAt في MongoDB يحمل اللحظة الحقيقية لإنشاء الفاتورة، ووقت الاستلام
+  //   يظل محفوظاً في updatedAt + توثيق المزامنة في sync queue بالديسكتوب
+  let offlineCreatedAt = null;
+  if (clientOrderId && clientCreatedAt) {
+    const parsed = new Date(clientCreatedAt);
+    if (!isNaN(parsed.getTime()) && parsed.getTime() <= Date.now() + 5 * 60 * 1000) {
+      offlineCreatedAt = parsed;
+    }
+  }
 
   // Idempotency check: if order was already synced from offline queue, return it
   if (clientOrderId) {
@@ -58,11 +71,19 @@ export const createOrder = async (req, res, next) => {
         ));
       }
 
-      calculatedTotal += product.price * item.quantity;
+      // F5: الحفاظ على سعر البيع الفعلي وقت إنشاء الفاتورة الأوفلاين (clientOrderId موجود).
+      // تغيير سعر المنتج الحالي في المنيو لا يغيّر قيمة فاتورة قديمة.
+      // الطلبات Online (بدون سعر مرسل) تظل تسعّر من المنتج كما كانت.
+      const salePrice =
+        clientOrderId && Number.isFinite(Number(item.price)) && Number(item.price) >= 0
+          ? Number(item.price)
+          : product.price;
+
+      calculatedTotal += salePrice * item.quantity;
       processedItems.push({
         product: product._id,
         quantity: item.quantity,
-        price: product.price,
+        price: salePrice,
       });
       productStockChanges.push({
         productId: product._id,
@@ -136,10 +157,11 @@ export const createOrder = async (req, res, next) => {
     // الحل الجذري للترقيم اليومي:
     // 1) dayKey = اليوم التقويمي بتوقيت القاهرة (Africa/Cairo) — موحّد للسيرفر والويب والديسكتوب
     //    مهما كان timezone السيرفر (UTC على السحابة سابقاً كان يخرب حدود اليوم).
+    //    F4: فواتير الأوفلاين المتزامنة تُرقَّم وتُجمَّع على يوم إنشائها الأصلي وليس يوم المزامنة.
     // 2) الترقيم من عداد ذري لكل يوم (Invoice_Counter) عبر findOneAndUpdate + $inc
     //    → تسلسلي، Race-safe، ويبدأ من 1 تلقائياً مع أول فاتورة في كل يوم.
     // 3) الفهرس الفريد بقى مركب { dayKey, orderNumber } — نفس الرقم يتكرر كل يوم بأمان.
-    const dayKey = getBusinessDayKey();
+    const dayKey = getBusinessDayKey(offlineCreatedAt || new Date());
 
     // أعلى رقم فعلي مسجَّل لهذا اليوم (يشمل فواتير ما قبل الترحيل التي ليس لديها dayKey
     // لكن createdAt يقع ضمن اليوم التجاري بتوقيت القاهرة)
@@ -216,6 +238,9 @@ export const createOrder = async (req, res, next) => {
           status: orderStatuses.completed,
           notes: notes || "",
           clientOrderId: clientOrderId || undefined,
+          // F4: فواتير الأوفلاين تحتفظ بوقت إنشائها الحقيقي (Mongoose يحترم createdAt
+          // الممرر صراحةً مع timestamps:true). الطلبات Online تبقى بدون تغيير.
+          ...(offlineCreatedAt ? { createdAt: offlineCreatedAt } : {}),
         });
       } catch (err) {
         // تعارض نادر في الرقم (مثلاً بعد استرجاع نسخة قديمة) → صحّح العداد وأعد المحاولة
@@ -269,7 +294,7 @@ export const createOrder = async (req, res, next) => {
 
 // =========================== 2) Get Orders ===========================
 export const getOrders = async (req, res, next) => {
-  const { status, searchDate, cashierId } = req.query;
+  const { status, searchDate, cashierId, from, to } = req.query;
   const filter = {};
 
   if (status) filter.status = status;
@@ -282,18 +307,27 @@ export const getOrders = async (req, res, next) => {
     filter.cashierId = req.user._id;
   }
 
-  if (searchDate) {
-    const start = new Date(searchDate);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(searchDate);
-    end.setHours(23, 59, 59, 999);
-    filter.createdAt = { $gte: start, $lte: end };
+  // F1: فلترة اليوم التجاري بتوقيت القاهرة (Africa/Cairo) — وليس timezone السيرفر.
+  // searchDate: يوم تجاري واحد. from/to: نطاق أيام تجارية (اختياري — backward-compatible).
+  if (searchDate || from || to) {
+    const range = {};
+    if (searchDate) {
+      const { start, end } = getBusinessDayRange(getBusinessDayKey(new Date(searchDate)));
+      range.$gte = start;
+      range.$lte = end;
+    } else {
+      if (from) range.$gte = getBusinessDayRange(getBusinessDayKey(new Date(from))).start;
+      if (to) range.$lte = getBusinessDayRange(getBusinessDayKey(new Date(to))).end;
+    }
+    filter.createdAt = range;
   }
 
+  // تضييق الحقول المعبأة لتقليل حجم الاستجابة جذرياً (يمنع 413 من Vercel مع نمو البيانات)
+  // — كل المستهلكين الحاليين يحتاجون name/price/image فقط، وgetOrder المفرد يبقى كامل الحقول
   const data = await orderModel.find(filter)
     .sort({ createdAt: -1 })
-    .populate("items.product")
-    .populate("cashierId")
+    .populate("items.product", "name price image")
+    .populate("cashierId", "userName email")
     .lean();
 
   return res.status(200).json({
