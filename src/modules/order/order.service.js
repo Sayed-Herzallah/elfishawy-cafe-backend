@@ -130,15 +130,22 @@ export const createOrder = async (req, res, next) => {
       }
     }
 
-    // ===== PHASE 3: Generate Order Number (Sequential, Race-safe) =====
+    // ===== PHASE 3: Generate Order Number (Sequential, Race-safe, Daily Reset) =====
     const generateOrderNumber = async () => {
-      // نستخدم aggregate MAX بدل sort(createdAt) لأن فواتير الأوفلاين المتزامنة
-      // قد تحمل createdAt قديماً مع رقم مؤقت كبير → sort الزمن يرجع رقماً خاطئاً.
-      // MAX على الرقم كـ integer يضمن دائماً البدء من أعلى رقم فعلي في القاعدة.
+      // نُولّد رقم الفاتورة بناءً على فواتير اليوم الحالي فقط.
+      // كل يوم يبدأ الترقيم من 1 من جديد — لا علاقة بأرقام أمس أو أي يوم سابق.
+      // نستخدم aggregate MAX (وليس sort) لأن فواتير الأوفلاين المتزامنة
+      // قد تحمل createdAt قديماً → MAX على الرقم يضمن دائماً أعلى رقم فعلي لهذا اليوم.
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date();
+      endOfDay.setHours(23, 59, 59, 999);
+
       const result = await orderModel.aggregate([
         {
           $match: {
             orderNumber: { $regex: "^[0-9]{1,6}$" },
+            createdAt: { $gte: startOfDay, $lte: endOfDay },
           },
         },
         {
