@@ -22,6 +22,8 @@ export const createOrderSchema = joi.object({
   clientOrderId: joi.string().allow("").optional(),
   // F4: وقت الإنشاء الأصلي للفاتورة الأوفلاين المتزامنة (اختياري — يُقبل مع clientOrderId فقط)
   clientCreatedAt: joi.date().optional(),
+  // ⚠️ مهمل (Deprecated) — رقم الفاتورة النهائي يُصدره السيرفر فقط من العداد اليومي الذري.
+  // يُقبل هنا للتوافق مع إصدارات الديسكتوب/الويب القديمة التي ما زالت ترسله، ويُتجاهل تماماً.
   orderNumber: joi.number().integer().min(1).optional(),
 }).required();
 

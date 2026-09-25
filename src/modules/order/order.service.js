@@ -207,13 +207,15 @@ export const createOrder = async (req, res, next) => {
       /* تجاهل — التخصيص العادي سيستمر */
     }
 
-    // ===== PHASE 4: Create Order (atomic allocation + self-healing retry) =====
-    const requestedOrderNum =
-      req.body.orderNumber &&
-      Number.isInteger(Number(req.body.orderNumber)) &&
-      Number(req.body.orderNumber) > 0
-        ? Number(req.body.orderNumber)
-        : null;
+    // ===== PHASE 4: Create Order (السيرفر هو المصدر الوحيد للرقم النهائي) =====
+    // قاعدة الترقيم النهائية:
+    //  - رقم الفاتورة النهائي يُصدره السيرفر فقط من العداد اليومي الذري (1, 2, 3, ...).
+    //  - لا يُقبل أي رقم من العميل: رقم الديسكتوب أوفلاين مؤقت فقط، وقد يتعارض مع أرقام
+    //    أُصدرت من جهاز/كاشير آخر أثناء انقطاع النت → كان يسبب عدم تطابق الأرقام بين
+    //    المنصة والديسكتوب وأرقاماً "بتزيد بشكل غلط".
+    //  - req.body.orderNumber يُقبل في الـ validation للتوافق مع العملاء القدامى ويُتجاهل هنا.
+    //  - التكرار ممنوع: الفهرس الفريد { dayKey, orderNumber } + إرجاع الفاتورة الموجودة
+    //    عند تكرار نفس clientOrderId (بدون إنشاء نسخة ثانية).
 
     let newOrder = null;
     let attempts = 0;
@@ -221,32 +223,18 @@ export const createOrder = async (req, res, next) => {
       attempts++;
       let orderNumber = null;
 
-      // إذا كان الطلب مرسلاً برقم محدد (مثل مزامنة أوفلاين) وفي المحاولة الأولى
-      if (requestedOrderNum && attempts === 1) {
-        const collision = await orderModel
-          .findOne({ dayKey, orderNumber: String(requestedOrderNum) })
-          .select("_id")
-          .lean();
-
-        if (!collision) {
-          orderNumber = String(requestedOrderNum);
-        }
-      }
-
-      if (!orderNumber) {
-        try {
-          // تخصيص ذري: زوّد العداد وخذ القيمة الجديدة في عملية واحدة
-          const counter = await invoiceCounterModel.findOneAndUpdate(
-            { _id: `invoice_${dayKey}` },
-            { $inc: { seq: 1 } },
-            { upsert: true, new: true, setDefaultsOnInsert: true }
-          );
-          orderNumber = String(counter?.seq || attempts);
-        } catch {
-          // fallback نادر: لو فشل العداد نستخدم أعلى رقم اليوم + المحاولة الحالية
-          const maxNum = await getMaxNumericForDay();
-          orderNumber = String(maxNum + attempts);
-        }
+      try {
+        // تخصيص ذري: زوّد العداد وخذ القيمة الجديدة في عملية واحدة
+        const counter = await invoiceCounterModel.findOneAndUpdate(
+          { _id: `invoice_${dayKey}` },
+          { $inc: { seq: 1 } },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+        orderNumber = String(counter?.seq || attempts);
+      } catch {
+        // fallback نادر: لو فشل العداد نستخدم أعلى رقم اليوم + المحاولة الحالية
+        const maxNum = await getMaxNumericForDay();
+        orderNumber = String(maxNum + attempts);
       }
 
       try {
@@ -274,8 +262,32 @@ export const createOrder = async (req, res, next) => {
           );
         }
       } catch (err) {
-        // تعارض نادر في الرقم (مثلاً بعد استرجاع نسخة قديمة) → صحّح العداد وأعد المحاولة
         if (err.code === 11000) {
+          // (1) نفس الفاتورة وصلت مرتين (إعادة محاولة بعد انقطاع النت أثناء استلام الرد،
+          //     أو صف مكرر في طابور المزامنة) → نُعيد الفاتورة الموجودة بدون إنشاء نسخة
+          //     ثانية حتى لا تتكرر الفاتورة في قاعدة البيانات الأساسية.
+          const isDuplicateClientOp =
+            Boolean(clientOrderId) &&
+            (Boolean(err?.keyPattern?.clientOrderId) ||
+              /clientOrderId/i.test(String(err?.message || "")));
+
+          if (isDuplicateClientOp) {
+            const alreadySynced = await orderModel
+              .findOne({ clientOrderId })
+              .populate("items.product", "name price image")
+              .populate("cashierId", "userName email");
+
+            if (alreadySynced) {
+              return res.status(200).json({
+                success: true,
+                message: "Order already synced",
+                data: alreadySynced,
+              });
+            }
+          }
+
+          // (2) تعارض نادر في رقم اليوم (مثلاً بعد استرجاع نسخة قديمة من القاعدة)
+          //     → صحّح العداد ليطابق أعلى رقم فعلي وأعد المحاولة
           await correctCounterToMax();
           continue;
         }

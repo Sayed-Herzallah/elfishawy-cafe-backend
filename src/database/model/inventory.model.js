@@ -46,6 +46,13 @@ const inventorySchema = new mongoose.Schema(
       ref: "User_Data",
       default: null,
     },
+    // معرّف العميل للصنف المُنشأ أوفلاين — يمنع التكرار عند إعادة إرسال المزامنة
+    clientInventoryId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
+    },
   },
   {
     timestamps: true,

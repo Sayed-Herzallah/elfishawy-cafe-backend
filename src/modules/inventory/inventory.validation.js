@@ -22,6 +22,8 @@ export const createInventorySchema = joi.object({
     }),
   costPrice: joi.number().min(0).optional(),
   totalCost: joi.number().min(0).optional(),
+  // معرّف الصنف المُنشأ أوفلاين — يمنع إنشاء صنف مكرر عند إعادة إرسال المزامنة
+  clientInventoryId: joi.string().allow("").optional(),
 }).required();
 
 export const restockInventorySchema = joi.object({
@@ -39,6 +41,8 @@ export const restockInventorySchema = joi.object({
     .messages({
       "number.min": "Cost price cannot be negative",
     }),
+  // معرّف عملية التوريد من طابور الأوفلاين — يمنع رفع الرصيد مرتين عند إعادة الإرسال
+  clientRestockId: joi.string().allow("").optional(),
 }).required();
 
 export const deleteInventorySchema = joi.object({

@@ -10,7 +10,21 @@ const toNumOr = (value, fallback) => {
 
 // =========================== 1) Create Item ===========================
 export const createItem = async (req, res, next) => {
-  const { name, quantity, unit, minLimit, costPrice, totalCost } = req.body;
+  const { name, quantity, unit, minLimit, costPrice, totalCost, clientInventoryId } = req.body;
+
+  // Idempotency: صنف أُنشئ أوفلاين واتبعت للمزامنة مرتين (قطع نت أثناء الرد)
+  // يرجع نفس الصنف الموجود بدل إنشاء صنف مكرر بنفس الاسم.
+  if (clientInventoryId) {
+    const alreadyCreated = await inventoryModel.findOne({ clientInventoryId })
+      .populate("lastRestockedBy", "userName roleType");
+    if (alreadyCreated) {
+      return res.status(200).json({
+        success: true,
+        message: "Inventory item already synced",
+        data: alreadyCreated,
+      });
+    }
+  }
 
   const qtyNum = toNumOr(quantity, 0);
 
@@ -38,6 +52,7 @@ export const createItem = async (req, res, next) => {
     lastRestockTotalCost: finalTotalCost,
     lastRestocked: new Date(),
     lastRestockedBy: req.user._id,
+    clientInventoryId: clientInventoryId || undefined,
   });
 
   // 🧾 تسجيل الرصيد الافتتاحي في سجل المشتريات — عشان كل حاجة بتتضاف للمخزون تظهر هناك
@@ -107,7 +122,26 @@ export const listInventory = async (req, res, next) => {
 // =========================== 3) Restock Item ===========================
 export const restockItem = async (req, res, next) => {
   const { id } = req.params;
-  const { quantity, totalCost, costPrice } = req.body;
+  const { quantity, totalCost, costPrice, clientRestockId } = req.body;
+
+  // Idempotency: نفس عملية التوريد من طابور الأوفلاين لو اتبعتت مرتين
+  // (قطع نت أثناء استلام الرد + إعادة إرسال تلقائية) ترجع نفس النتيجة
+  // بدون رفع رصيد المخزون مرتين وبدون قيد شراء مكرر.
+  // البحث بالوصف يضمن عدم تكرار التوريد حتى لو تكرر الإرسال.
+  if (clientRestockId) {
+    const alreadyRestocked = await expenseModel.findOne({
+      description: `OFFLINE_RESTOCK:${clientRestockId}`,
+    });
+    if (alreadyRestocked) {
+      const currentItem = await inventoryModel.findById(id)
+        .populate("lastRestockedBy", "userName roleType");
+      return res.status(200).json({
+        success: true,
+        message: "Restock already synced",
+        data: currentItem,
+      });
+    }
+  }
 
   const item = await inventoryModel.findById(id);
   if (!item) return next(new Error("Inventory item not found", { cause: 404 }));
@@ -140,11 +174,15 @@ export const restockItem = async (req, res, next) => {
     // تحسيني — فشل المزامنة لا يوقف التوريد
   }
 
-  // 🧾 تسجيل التوريد في سجل المشتريات — عشان توريد المدير يظهر هناك باسمه زي الكاشير
+  // 🧾 تسجيل التوريد في سجل المشتريات — عشان توريد المدير يظهر هناك باسمه زي الكاشير.
+  // وسم OFFLINE_RESTOCK:clientRestockId يضمن Idempotency — نفس التوريد الأوفلاين
+  // لو اتبعت مرتين (انقطاع نت أثناء الرد) لا يُسجَّل قيد مكرر ولا يرتفع الرصيد مرتين.
   let expenseCreated = true;
   try {
     await expenseModel.create({
-      description: `توريد مخزون: ${item.name} - كمية: ${qtyNum} ${item.unit}`,
+      description: clientRestockId
+        ? `OFFLINE_RESTOCK:${clientRestockId}`
+        : `توريد مخزون: ${item.name} - كمية: ${qtyNum} ${item.unit}`,
       amount: finalTotalCost,
       category: "inventory",
       inventoryItemLinked: item._id,
@@ -154,6 +192,19 @@ export const restockItem = async (req, res, next) => {
       addedBy: req.user._id,
     });
   } catch {
+    // فشل إنشاء قيد لسبب غير التكرار → نتحقق: لو السبب تكرار الوسم فالتوريد تم مسبقاً
+    if (clientRestockId) {
+      const dup = await expenseModel.findOne({ description: `OFFLINE_RESTOCK:${clientRestockId}` });
+      if (dup) {
+        const currentItem = await inventoryModel.findById(item._id)
+          .populate("lastRestockedBy", "userName roleType");
+        return res.status(200).json({
+          success: true,
+          message: "Restock already synced",
+          data: currentItem,
+        });
+      }
+    }
     expenseCreated = false;
   }
 
