@@ -12,13 +12,10 @@ const router = Router();
 // All inventory routes require login; per-route rules below decide who can do what.
 router.use(authAction);
 
-// ===================== Create Item (Admin only) =====================
-// Only the admin defines WHICH raw materials exist and their alert thresholds.
-// A cashier must never be able to invent/rename items — that's how stock
-// discrepancies get hidden ("ghost" items or renamed items).
+// ===================== Create Item (Admin + Cashier) =====================
 router.post(
   "/",
-  authorization([roles.admin]),
+  authorization([roles.admin, roles.cashier]),
   validation(inventoryValidation.createInventorySchema),
   asyncHandler(inventoryService.createItem)
 );
