@@ -22,6 +22,7 @@ export const createOrderSchema = joi.object({
   clientOrderId: joi.string().allow("").optional(),
   // F4: وقت الإنشاء الأصلي للفاتورة الأوفلاين المتزامنة (اختياري — يُقبل مع clientOrderId فقط)
   clientCreatedAt: joi.date().optional(),
+  orderNumber: joi.number().integer().min(1).optional(),
 }).required();
 
 export const updateOrderStatusSchema = joi.object({

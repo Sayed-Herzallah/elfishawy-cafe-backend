@@ -208,23 +208,45 @@ export const createOrder = async (req, res, next) => {
     }
 
     // ===== PHASE 4: Create Order (atomic allocation + self-healing retry) =====
+    const requestedOrderNum =
+      req.body.orderNumber &&
+      Number.isInteger(Number(req.body.orderNumber)) &&
+      Number(req.body.orderNumber) > 0
+        ? Number(req.body.orderNumber)
+        : null;
+
     let newOrder = null;
     let attempts = 0;
     while (!newOrder && attempts < 5) {
       attempts++;
       let orderNumber = null;
-      try {
-        // تخصيص ذري: زوّد العداد وخذ القيمة الجديدة في عملية واحدة
-        const counter = await invoiceCounterModel.findOneAndUpdate(
-          { _id: `invoice_${dayKey}` },
-          { $inc: { seq: 1 } },
-          { upsert: true, new: true, setDefaultsOnInsert: true }
-        );
-        orderNumber = String(counter?.seq || attempts);
-      } catch {
-        // fallback نادر: لو فشل العداد نستخدم أعلى رقم اليوم + المحاولة الحالية
-        const maxNum = await getMaxNumericForDay();
-        orderNumber = String(maxNum + attempts);
+
+      // إذا كان الطلب مرسلاً برقم محدد (مثل مزامنة أوفلاين) وفي المحاولة الأولى
+      if (requestedOrderNum && attempts === 1) {
+        const collision = await orderModel
+          .findOne({ dayKey, orderNumber: String(requestedOrderNum) })
+          .select("_id")
+          .lean();
+
+        if (!collision) {
+          orderNumber = String(requestedOrderNum);
+        }
+      }
+
+      if (!orderNumber) {
+        try {
+          // تخصيص ذري: زوّد العداد وخذ القيمة الجديدة في عملية واحدة
+          const counter = await invoiceCounterModel.findOneAndUpdate(
+            { _id: `invoice_${dayKey}` },
+            { $inc: { seq: 1 } },
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+          );
+          orderNumber = String(counter?.seq || attempts);
+        } catch {
+          // fallback نادر: لو فشل العداد نستخدم أعلى رقم اليوم + المحاولة الحالية
+          const maxNum = await getMaxNumericForDay();
+          orderNumber = String(maxNum + attempts);
+        }
       }
 
       try {
@@ -242,6 +264,15 @@ export const createOrder = async (req, res, next) => {
           // الممرر صراحةً مع timestamps:true). الطلبات Online تبقى بدون تغيير.
           ...(offlineCreatedAt ? { createdAt: offlineCreatedAt } : {}),
         });
+
+        // مزامنة العداد مع أعلى رقم مستخدم لضمان استمرار التسلسل التصاعدي
+        if (Number(orderNumber) > 0) {
+          await invoiceCounterModel.updateOne(
+            { _id: `invoice_${dayKey}` },
+            { $max: { seq: Number(orderNumber) } },
+            { upsert: true }
+          );
+        }
       } catch (err) {
         // تعارض نادر في الرقم (مثلاً بعد استرجاع نسخة قديمة) → صحّح العداد وأعد المحاولة
         if (err.code === 11000) {
