@@ -1,6 +1,8 @@
+import mongoose from "mongoose";
 import { inventoryModel } from "../../database/model/inventory.model.js";
 import { expenseModel } from "../../database/model/expense.model.js";
 import { syncProductsForInventoryItem } from "../../utils/recipe/productStockSync.js";
+import { createPurchaseNumber } from "../expense/purchaseNumber.service.js";
 
 /** تحويل آمن للأرقام — Number(undefined) بيرجع NaN وده اللي كان بيكسر الحسابات */
 const toNumOr = (value, fallback) => {
@@ -11,6 +13,8 @@ const toNumOr = (value, fallback) => {
 // =========================== 1) Create Item ===========================
 export const createItem = async (req, res, next) => {
   const { name, quantity, unit, minLimit, costPrice, totalCost, clientInventoryId } = req.body;
+  const qtyNum = toNumOr(quantity, 0);
+  const openingExpenseId = clientInventoryId ? `${clientInventoryId}:opening` : undefined;
 
   // Idempotency: صنف أُنشئ أوفلاين واتبعت للمزامنة مرتين (قطع نت أثناء الرد)
   // يرجع نفس الصنف الموجود بدل إنشاء صنف مكرر بنفس الاسم.
@@ -18,15 +22,36 @@ export const createItem = async (req, res, next) => {
     const alreadyCreated = await inventoryModel.findOne({ clientInventoryId })
       .populate("lastRestockedBy", "userName roleType");
     if (alreadyCreated) {
+      let openingExpense = openingExpenseId
+        ? await expenseModel.findOne({ clientExpenseId: openingExpenseId }).select("_id purchaseNumber clientExpenseId").lean()
+        : null;
+      if (!openingExpense && qtyNum > 0) {
+        const total = totalCost !== undefined && totalCost !== null && totalCost !== ""
+          ? toNumOr(totalCost, 0)
+          : Number((toNumOr(costPrice, 0) * qtyNum).toFixed(2));
+        const purchaseNumber = await createPurchaseNumber();
+        const [createdExpense] = await expenseModel.create([{
+          description: `رصيد افتتاحي: ${name} - كمية: ${qtyNum} ${unit}`,
+          amount: total,
+          category: "inventory",
+          inventoryItemLinked: alreadyCreated._id,
+          inventoryQuantityAdded: qtyNum,
+          unitCost: qtyNum > 0 && total > 0 ? Number((total / qtyNum).toFixed(2)) : undefined,
+          date: new Date(),
+          addedBy: req.user._id,
+          clientExpenseId: openingExpenseId,
+          purchaseNumber,
+        }]);
+        openingExpense = createdExpense;
+      }
       return res.status(200).json({
         success: true,
         message: "Inventory item already synced",
         data: alreadyCreated,
+        openingExpense,
       });
     }
   }
-
-  const qtyNum = toNumOr(quantity, 0);
 
   // Calculate costPrice if totalCost provided, or calculate totalCost if costPrice provided
   let finalCostPrice = 0;
@@ -56,9 +81,11 @@ export const createItem = async (req, res, next) => {
   });
 
   // 🧾 تسجيل الرصيد الافتتاحي في سجل المشتريات — عشان كل حاجة بتتضاف للمخزون تظهر هناك
+  let openingExpense = null;
   if (qtyNum > 0) {
     try {
-      await expenseModel.create({
+      const purchaseNumber = await createPurchaseNumber();
+      const [createdExpense] = await expenseModel.create([{
         description: `رصيد افتتاحي: ${name} - كمية: ${qtyNum} ${unit}`,
         amount: finalTotalCost,
         category: "inventory",
@@ -67,9 +94,12 @@ export const createItem = async (req, res, next) => {
         unitCost: qtyNum > 0 && finalTotalCost > 0 ? Number((finalTotalCost / qtyNum).toFixed(2)) : undefined,
         date: new Date(),
         addedBy: req.user._id,
-      });
+        clientExpenseId: openingExpenseId,
+        purchaseNumber,
+      }]);
+      openingExpense = createdExpense;
     } catch {
-      // تسجيل القيد تحسيني — فشله مبيوقفش إنشاء الصنف
+      if (clientInventoryId) throw new Error("Failed to record opening inventory purchase");
     }
   }
 
@@ -89,6 +119,9 @@ export const createItem = async (req, res, next) => {
     success: true,
     message: "Inventory item created successfully",
     data: populatedItem,
+    openingExpense: openingExpense
+      ? { _id: openingExpense._id, clientExpenseId: openingExpense.clientExpenseId, purchaseNumber: openingExpense.purchaseNumber }
+      : null,
   });
 };
 
@@ -123,101 +156,110 @@ export const listInventory = async (req, res, next) => {
 export const restockItem = async (req, res, next) => {
   const { id } = req.params;
   const { quantity, totalCost, costPrice, clientRestockId } = req.body;
+  const qtyNum = toNumOr(quantity, 0);
+  let applied = true;
+  let expenseId = null;
+  let purchaseNumber = null;
+  try {
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
+        applied = true;
+        expenseId = null;
+        purchaseNumber = null;
+        if (clientRestockId) {
+          const existing = await expenseModel.findOne({
+            $or: [
+              { clientRestockId },
+              { clientExpenseId: clientRestockId },
+              { description: `OFFLINE_RESTOCK:${clientRestockId}` },
+            ],
+          }).session(session);
+          if (existing) {
+            applied = false;
+            expenseId = existing._id;
+            purchaseNumber = existing.purchaseNumber || null;
+            return;
+          }
+        }
 
-  // Idempotency: نفس عملية التوريد من طابور الأوفلاين لو اتبعتت مرتين
-  // (قطع نت أثناء استلام الرد + إعادة إرسال تلقائية) ترجع نفس النتيجة
-  // بدون رفع رصيد المخزون مرتين وبدون قيد شراء مكرر.
-  // البحث بالوصف يضمن عدم تكرار التوريد حتى لو تكرر الإرسال.
-  if (clientRestockId) {
-    const alreadyRestocked = await expenseModel.findOne({
-      description: `OFFLINE_RESTOCK:${clientRestockId}`,
-    });
-    if (alreadyRestocked) {
-      const currentItem = await inventoryModel.findById(id)
-        .populate("lastRestockedBy", "userName roleType");
-      return res.status(200).json({
-        success: true,
-        message: "Restock already synced",
-        data: currentItem,
+        const item = await inventoryModel.findById(id).session(session);
+        if (!item) throw new Error("Inventory item not found", { cause: 404 });
+
+        // Update stock and create its purchase ledger record in the same transaction.
+        let finalCostPrice = toNumOr(item.costPrice, 0);
+        let finalTotalCost = toNumOr(item.lastRestockTotalCost, 0);
+        if (totalCost !== undefined && totalCost !== null && totalCost !== "") {
+          finalTotalCost = toNumOr(totalCost, 0);
+          finalCostPrice = qtyNum > 0 ? Number((finalTotalCost / qtyNum).toFixed(2)) : finalCostPrice;
+        } else if (costPrice !== undefined && costPrice !== null && costPrice !== "") {
+          finalCostPrice = toNumOr(costPrice, 0);
+          finalTotalCost = Number((finalCostPrice * qtyNum).toFixed(2));
+        }
+
+        item.quantity += qtyNum;
+        item.costPrice = finalCostPrice;
+        item.lastRestockTotalCost = finalTotalCost;
+        item.lastRestocked = new Date();
+        item.lastRestockedBy = req.user._id;
+        await item.save({ session });
+
+        purchaseNumber = await createPurchaseNumber(session);
+        const [purchaseExpense] = await expenseModel.create([{
+          description: `توريد مخزون: ${item.name} - كمية: ${qtyNum} ${item.unit}`,
+          amount: finalTotalCost,
+          category: "inventory",
+          inventoryItemLinked: item._id,
+          inventoryQuantityAdded: qtyNum,
+          unitCost: qtyNum > 0 && finalTotalCost > 0 ? Number((finalTotalCost / qtyNum).toFixed(2)) : undefined,
+          date: new Date(),
+          addedBy: req.user._id,
+          clientRestockId: clientRestockId || undefined,
+          clientExpenseId: clientRestockId || undefined,
+          purchaseNumber,
+        }], { session });
+        expenseId = purchaseExpense._id;
       });
+    } finally {
+      await session.endSession();
+    }
+  } catch (err) {
+    if (clientRestockId && err.code === 11000) {
+      const existing = await expenseModel.findOne({
+        $or: [
+          { clientRestockId },
+          { clientExpenseId: clientRestockId },
+          { description: `OFFLINE_RESTOCK:${clientRestockId}` },
+        ],
+      });
+      if (existing) {
+        applied = false;
+        expenseId = existing._id;
+        purchaseNumber = existing.purchaseNumber || null;
+      } else {
+        return next(new Error(`Failed to restock inventory: ${err.message}`, { cause: 500 }));
+      }
+    } else {
+      return next(new Error(`Failed to restock inventory: ${err.message}`, { cause: err.cause || 500 }));
     }
   }
 
-  const item = await inventoryModel.findById(id);
-  if (!item) return next(new Error("Inventory item not found", { cause: 404 }));
-
-  const qtyNum = toNumOr(quantity, 0);
-
-  // الحسابات على الكمية الموردة نفسها: الإجمالي ÷ الكمية الموردة = سعر وحدة التوريد الجديد
-  let finalCostPrice = toNumOr(item.costPrice, 0);
-  let finalTotalCost = toNumOr(item.lastRestockTotalCost, 0);
-
-  if (totalCost !== undefined && totalCost !== null && totalCost !== "") {
-    finalTotalCost = toNumOr(totalCost, 0);
-    finalCostPrice = qtyNum > 0 ? Number((finalTotalCost / qtyNum).toFixed(2)) : finalCostPrice;
-  } else if (costPrice !== undefined && costPrice !== null && costPrice !== "") {
-    finalCostPrice = toNumOr(costPrice, 0);
-    finalTotalCost = Number((finalCostPrice * qtyNum).toFixed(2));
-  }
-
-  item.quantity += qtyNum;
-  item.costPrice = finalCostPrice;
-  item.lastRestockTotalCost = finalTotalCost;
-  item.lastRestocked = new Date();
-  item.lastRestockedBy = req.user._id; // audit trail: who added this stock
-  await item.save();
-
-  // 🔄 مزامنة أرصدة المنتجات المرتبطة — المنتج النافذ يفتح تلقائياً بعد التوريد
   try {
-    await syncProductsForInventoryItem(item._id.toString());
+    await syncProductsForInventoryItem(id);
   } catch {
     // تحسيني — فشل المزامنة لا يوقف التوريد
   }
 
-  // 🧾 تسجيل التوريد في سجل المشتريات — عشان توريد المدير يظهر هناك باسمه زي الكاشير.
-  // وسم OFFLINE_RESTOCK:clientRestockId يضمن Idempotency — نفس التوريد الأوفلاين
-  // لو اتبعت مرتين (انقطاع نت أثناء الرد) لا يُسجَّل قيد مكرر ولا يرتفع الرصيد مرتين.
-  let expenseCreated = true;
-  try {
-    await expenseModel.create({
-      description: clientRestockId
-        ? `OFFLINE_RESTOCK:${clientRestockId}`
-        : `توريد مخزون: ${item.name} - كمية: ${qtyNum} ${item.unit}`,
-      amount: finalTotalCost,
-      category: "inventory",
-      inventoryItemLinked: item._id,
-      inventoryQuantityAdded: qtyNum,
-      unitCost: qtyNum > 0 && finalTotalCost > 0 ? Number((finalTotalCost / qtyNum).toFixed(2)) : undefined,
-      date: new Date(),
-      addedBy: req.user._id,
-    });
-  } catch {
-    // فشل إنشاء قيد لسبب غير التكرار → نتحقق: لو السبب تكرار الوسم فالتوريد تم مسبقاً
-    if (clientRestockId) {
-      const dup = await expenseModel.findOne({ description: `OFFLINE_RESTOCK:${clientRestockId}` });
-      if (dup) {
-        const currentItem = await inventoryModel.findById(item._id)
-          .populate("lastRestockedBy", "userName roleType");
-        return res.status(200).json({
-          success: true,
-          message: "Restock already synced",
-          data: currentItem,
-        });
-      }
-    }
-    expenseCreated = false;
-  }
-
   const populatedItem = await inventoryModel
-    .findById(item._id)
+    .findById(id)
     .populate("lastRestockedBy", "userName roleType");
 
   return res.status(200).json({
     success: true,
-    message: expenseCreated
-      ? "Inventory item restocked successfully"
-      : "Inventory item restocked successfully (expense log skipped)",
+    message: applied ? "Inventory item restocked successfully" : "Restock already synced",
     data: populatedItem,
+    expenseId,
+    purchaseNumber,
   });
 };
 

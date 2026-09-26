@@ -63,6 +63,18 @@ const expenseSchema = new mongoose.Schema(
       sparse: true,
       index: true,
     },
+    clientRestockId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
+    },
+    purchaseNumber: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
+    },
   },
   {
     timestamps: true,

@@ -1,6 +1,6 @@
 {
   "name": "elfishawy-cafe-backend",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "description": "Production-Ready POS and Management Backend for Elfishawy Cafe",
   "main": "index.js",
   "type": "module",

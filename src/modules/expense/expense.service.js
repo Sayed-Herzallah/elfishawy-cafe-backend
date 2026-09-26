@@ -1,7 +1,9 @@
+import mongoose from "mongoose";
 import { expenseModel } from "../../database/model/expense.model.js";
 import { inventoryModel } from "../../database/model/inventory.model.js";
 import { roles } from "../../database/model/user.model.js";
 import { syncProductsForInventoryItem } from "../../utils/recipe/productStockSync.js";
+import { createPurchaseNumber } from "./purchaseNumber.service.js";
 
 // =========================== 1) Create Expense ===========================
 export const createExpense = async (req, res, next) => {
@@ -35,47 +37,79 @@ export const createExpense = async (req, res, next) => {
 
   try {
     if (category === "inventory") {
-      const item = await inventoryModel.findById(inventoryItemLinked);
-      if (!item) return next(new Error("Linked inventory item not found", { cause: 404 }));
-
       const qtyNum = Number(inventoryQuantityAdded) || 0;
       // الإجمالي = totalCost المرسل وإلا amount (هما نفس الشيء في فاتورة الشراء)
       const finalTotalCost = Number(totalCost ?? amount) || 0;
       const finalUnitCost =
         qtyNum > 0 && finalTotalCost > 0 ? Number((finalTotalCost / qtyNum).toFixed(2)) : 0;
+      let expenseId;
+      let created = true;
+      const session = await mongoose.startSession();
+      try {
+        await session.withTransaction(async () => {
+          created = true;
+          if (clientExpenseId) {
+            const existing = await expenseModel.findOne({ clientExpenseId }).session(session);
+            if (existing) {
+              expenseId = existing._id;
+              created = false;
+              return;
+            }
+          }
 
-      // Restock inventory item automatically!
-      item.quantity += qtyNum;
-      item.costPrice = finalUnitCost || item.costPrice;
-      item.lastRestockTotalCost = finalTotalCost;
-      item.lastRestocked = date || new Date();
-      await item.save();
+          const item = await inventoryModel.findById(inventoryItemLinked).session(session);
+          if (!item) throw new Error("Linked inventory item not found", { cause: 404 });
+
+          item.quantity += qtyNum;
+          item.costPrice = finalUnitCost || item.costPrice;
+          item.lastRestockTotalCost = finalTotalCost;
+          item.lastRestocked = date || new Date();
+          await item.save({ session });
+
+          const purchaseNumber = await createPurchaseNumber(session, date || new Date());
+          const [newExpense] = await expenseModel.create([{
+            description,
+            amount: Number(amount),
+            category,
+            inventoryItemLinked,
+            inventoryQuantityAdded: qtyNum || undefined,
+            unitCost: finalUnitCost,
+            date: date || new Date(),
+            addedBy,
+            clientExpenseId: clientExpenseId || undefined,
+            purchaseNumber,
+          }], { session });
+          expenseId = newExpense._id;
+        });
+      } catch (err) {
+        if (clientExpenseId && err.code === 11000) {
+          const existing = await expenseModel.findOne({ clientExpenseId });
+          if (existing) {
+            expenseId = existing._id;
+            created = false;
+          } else {
+            throw err;
+          }
+        } else {
+          throw err;
+        }
+      } finally {
+        await session.endSession();
+      }
 
       try {
-        await syncProductsForInventoryItem(item._id.toString());
+        await syncProductsForInventoryItem(String(inventoryItemLinked));
       } catch {
         // تحسيني
       }
 
-      const newExpense = await expenseModel.create({
-        description,
-        amount: Number(amount),
-        category,
-        inventoryItemLinked,
-        inventoryQuantityAdded: qtyNum || undefined,
-        unitCost: finalUnitCost,
-        date: date || new Date(),
-        addedBy,
-        clientExpenseId: clientExpenseId || undefined,
-      });
-
-      const expenseData = await expenseModel.findById(newExpense._id)
+      const expenseData = await expenseModel.findById(expenseId)
         .populate("inventoryItemLinked", "name unit lastRestockTotalCost")
         .populate("addedBy", "userName email");
 
-      return res.status(201).json({
+      return res.status(created ? 201 : 200).json({
         success: true,
-        message: "Expense logged successfully",
+        message: created ? "Expense logged successfully" : "Expense already synced",
         data: expenseData,
       });
     }
@@ -102,7 +136,7 @@ export const createExpense = async (req, res, next) => {
     });
 
   } catch (err) {
-    return next(new Error(`Failed to log expense: ${err.message}`, { cause: 500 }));
+    return next(new Error(`Failed to log expense: ${err.message}`, { cause: err.cause || 500 }));
   }
 };
 
@@ -196,8 +230,8 @@ export const updateExpense = async (req, res, next) => {
       finalQtyAdded > 0 && finalTotalCost > 0
         ? Number((finalTotalCost / finalQtyAdded).toFixed(2))
         : unitCost !== undefined
-        ? Number(unitCost) || 0
-        : undefined;
+          ? Number(unitCost) || 0
+          : undefined;
 
     if (finalCategory === "inventory" && finalLinkedItem) {
       const newItem = await inventoryModel.findById(finalLinkedItem);
@@ -230,6 +264,9 @@ export const updateExpense = async (req, res, next) => {
       expense.unitCost = finalUnitCost;
     }
     if (date) expense.date = date;
+    if (finalCategory === "inventory" && !expense.purchaseNumber) {
+      expense.purchaseNumber = await createPurchaseNumber();
+    }
 
     await expense.save();
 

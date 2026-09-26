@@ -1,9 +1,16 @@
 import mongoose from "mongoose";
+import { purchaseCounterModel } from "./model/purchaseCounter.model.js";
 
 const connectDB = async () => {
   try {
     await mongoose.connect(process.env.MONGO_URI);
     console.log("DB connected successfully ✅");
+
+    try {
+      await purchaseCounterModel.createCollection();
+    } catch (error) {
+      if (error.code !== 48 && error.codeName !== "NamespaceExists") throw error;
+    }
 
     // ─── ترحيل الفهرس القديم ──────────────────────────────────────
     // الفهرس الفريد العالمي القديم (orderNumber_1) يمنع تكرار رقم "1"
