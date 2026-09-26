@@ -4,6 +4,7 @@ import { inventoryModel } from "../../database/model/inventory.model.js";
 import { roles } from "../../database/model/user.model.js";
 import { syncProductsForInventoryItem } from "../../utils/recipe/productStockSync.js";
 import { createPurchaseNumber } from "./purchaseNumber.service.js";
+import { getBusinessDayKey, getBusinessDayRange } from "../../utils/businessDay.js";
 
 // =========================== 1) Create Expense ===========================
 export const createExpense = async (req, res, next) => {
@@ -158,12 +159,18 @@ export const listExpenses = async (req, res, next) => {
     filter.category = "inventory";
   }
 
-  if (searchDate) {
-    const start = new Date(searchDate);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(searchDate);
-    end.setHours(23, 59, 59, 999);
-    filter.date = { $gte: start, $lte: end };
+  const { from, to } = req.query;
+  if (searchDate || from || to) {
+    if (searchDate) {
+      const { start, end } = getBusinessDayRange(getBusinessDayKey(new Date(searchDate)));
+      filter.date = { $gte: start, $lte: end };
+    } else if (from || to) {
+      const start = from ? getBusinessDayRange(getBusinessDayKey(new Date(from))).start : null;
+      const end = to ? getBusinessDayRange(getBusinessDayKey(new Date(to))).end : null;
+      filter.date = {};
+      if (start) filter.date.$gte = start;
+      if (end) filter.date.$lte = end;
+    }
   }
 
   const data = await expenseModel.find(filter)
