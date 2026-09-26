@@ -163,14 +163,23 @@ export const createOrder = async (req, res, next) => {
     // 3) الفهرس الفريد بقى مركب { dayKey, orderNumber } — نفس الرقم يتكرر كل يوم بأمان.
     const dayKey = getBusinessDayKey(offlineCreatedAt || new Date());
 
+    // حد أمان: يوم واحد في المقهى مستحيل يوصل 4 أرقام فواتير.
+    // أي رقم أكبر من ده بيانات قديمة/قديمة الطراز (مثل 9607 أو 1173) ويجب ألّا
+    // يبذر العداد اليومي ولا يرفعه — ده كان سبب ظهور أرقام فواتير ضخمة
+    // (كل فاتورة جديدة كانت تكمل من 9608 و 9609 وهكذا).
+    const MAX_PLAUSIBLE_DAILY_INVOICE = 999;
+    const MAX_PLAUSIBLE_DIGITS = String(MAX_PLAUSIBLE_DAILY_INVOICE).length; // 3
+
     // أعلى رقم فعلي مسجَّل لهذا اليوم (يشمل فواتير ما قبل الترحيل التي ليس لديها dayKey
-    // لكن createdAt يقع ضمن اليوم التجاري بتوقيت القاهرة)
+    // لكن createdAt يقع ضمن اليوم التجاري بتوقيت القاهرة).
+    // ملاحظة: الأرقام المستبعدة هنا تتجاوز الحد المعقول فقط — بذرة العداد
+    // لازم تبدأ من رقم يومي حقيقي مش من رقم مهجور.
     const getMaxNumericForDay = async () => {
       const { start, end } = getBusinessDayRange(dayKey);
       const result = await orderModel.aggregate([
         {
           $match: {
-            orderNumber: { $regex: "^[0-9]{1,6}$" },
+            orderNumber: { $regex: `^[0-9]{1,${MAX_PLAUSIBLE_DIGITS}}$` },
             $or: [{ dayKey }, { dayKey: null, createdAt: { $gte: start, $lte: end } }],
           },
         },
@@ -196,12 +205,40 @@ export const createOrder = async (req, res, next) => {
       }
     };
 
+    /**
+     * شفاء ذاتي للعداد اليومي لو اتسمّم برقم غير منطقي.
+     * فاتورة قديمة أو مسترجَعة رقمها 4-6 أرقام كانت بترفع العداد، فيلتصق
+     * العداد بأرقام مثل 9607 → كل الفواتير الجديدة بتبقى بأرقام ضخمة.
+     * هنا بنرجّع العداد لأعلى رقم *واقعي* في اليوم (بحد أقصى 3 أرقام).
+     * @returns {boolean} true لو تم التصحيح
+     */
+    const healPoisonedCounter = async () => {
+      try {
+        const counter = await invoiceCounterModel.findById(`invoice_${dayKey}`).lean();
+        const seq = Number(counter?.seq) || 0;
+        if (seq <= MAX_PLAUSIBLE_DAILY_INVOICE) return false;
+        const realMax = await getMaxNumericForDay();
+        if (realMax >= seq) return false; // العداد سليم فعلاً
+        await invoiceCounterModel.updateOne(
+          { _id: `invoice_${dayKey}` },
+          { $set: { seq: realMax } },
+          { upsert: true }
+        );
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
     // بذرة أول يوم: لو العداد لسه غير موجود، ابدأه من أعلى رقم موجود فعلاً
     // لنفس اليوم التجاري (حتى لا تتكرر أرقام فواتير أُنشئت قبل التحديث)
     try {
       const existingCounter = await invoiceCounterModel.findById(`invoice_${dayKey}`);
       if (!existingCounter) {
         await correctCounterToMax();
+      } else {
+        // العداد موجود بس ممكن يكون متسمّم برقم قديم غير منطقي (4+ أرقام)
+        await healPoisonedCounter();
       }
     } catch {
       /* تجاهل — التخصيص العادي سيستمر */
@@ -235,6 +272,14 @@ export const createOrder = async (req, res, next) => {
         // fallback نادر: لو فشل العداد نستخدم أعلى رقم اليوم + المحاولة الحالية
         const maxNum = await getMaxNumericForDay();
         orderNumber = String(maxNum + attempts);
+      }
+
+      // حاجز أمان أخير: لو رجع رقم كبير غير منطقي (عداد مسمّم لسه)، نصححه ونطلب
+      // رقم صحيح فوراً بدل حفظ الفاتورة برقم ضخم.
+      if (Number(orderNumber) > MAX_PLAUSIBLE_DAILY_INVOICE) {
+        await healPoisonedCounter();
+        const realMax = await getMaxNumericForDay();
+        orderNumber = String(realMax + 1);
       }
 
       try {
