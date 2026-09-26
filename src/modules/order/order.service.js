@@ -184,6 +184,8 @@ export const createOrder = async (req, res, next) => {
           },
         },
         { $addFields: { orderNumberInt: { $toInt: "$orderNumber" } } },
+        // ✅ استثني الأرقام التي تجاوزت الحد المعقول (أرقام قديمة/مشوّهة)
+        { $match: { orderNumberInt: { $lte: MAX_PLAUSIBLE_DAILY_INVOICE } } },
         { $group: { _id: null, maxNum: { $max: "$orderNumberInt" } } },
       ]);
       return result.length > 0 ? result[0].maxNum || 0 : 0;
