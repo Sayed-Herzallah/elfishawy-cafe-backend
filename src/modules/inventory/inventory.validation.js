@@ -43,6 +43,10 @@ export const restockInventorySchema = joi.object({
     }),
   // معرّف عملية التوريد من طابور الأوفلاين — يمنع رفع الرصيد مرتين عند إعادة الإرسال
   clientRestockId: joi.string().allow("").optional(),
+  // ⏱️ وقت التوريد الأصلي (توريدات الديسكتوب أوفلاين المتزامنة لاحقاً).
+  // يُستخدم لتسجيل قيد الشراء على يومه التجاري الأصلي بدل يوم وصول المزامنة،
+  // وإلا ظهرت المشتريات في يوم مختلف على المنصة عن الديسكتوب.
+  date: joi.date().optional().allow(null, ""),
 }).required();
 
 export const deleteInventorySchema = joi.object({

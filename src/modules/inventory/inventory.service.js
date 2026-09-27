@@ -155,8 +155,21 @@ export const listInventory = async (req, res, next) => {
 // =========================== 3) Restock Item ===========================
 export const restockItem = async (req, res, next) => {
   const { id } = req.params;
-  const { quantity, totalCost, costPrice, clientRestockId } = req.body;
+  const { quantity, totalCost, costPrice, clientRestockId, date } = req.body;
   const qtyNum = toNumOr(quantity, 0);
+
+  // ⏱️ يوم التوريد الحقيقي: توريدات الأوفلاين بتوصل متأخرة وقت عودة الإنترنت، فلو
+  // سجّلناها بوقت الاستلام اتحسبت في يوم تجاري تاني → أعداد/إجماليات المشتريات
+  // تختلف بين الديسكتوب (سجّلها محلياً بيومها) والمنصة. نحترم التاريخ المرسل من
+  // العميل بحدود آمنة: تاريخ صالح وغير مستقبلي (هامش 5 دقائق لفروق الساعات).
+  let restockDate = new Date();
+  if (date) {
+    const parsed = new Date(date);
+    if (!isNaN(parsed.getTime()) && parsed.getTime() <= Date.now() + 5 * 60 * 1000) {
+      restockDate = parsed;
+    }
+  }
+
   let applied = true;
   let expenseId = null;
   let purchaseNumber = null;
@@ -200,7 +213,8 @@ export const restockItem = async (req, res, next) => {
         item.quantity += qtyNum;
         item.costPrice = finalCostPrice;
         item.lastRestockTotalCost = finalTotalCost;
-        item.lastRestocked = new Date();
+        // وقت التوريد الفعلي (يوم العملية) مش وقت وصول المزامنة
+        item.lastRestocked = restockDate;
         item.lastRestockedBy = req.user._id;
         await item.save({ session });
 
@@ -212,7 +226,9 @@ export const restockItem = async (req, res, next) => {
           inventoryItemLinked: item._id,
           inventoryQuantityAdded: qtyNum,
           unitCost: qtyNum > 0 && finalTotalCost > 0 ? Number((finalTotalCost / qtyNum).toFixed(2)) : undefined,
-          date: new Date(),
+          // قيد الشراء بيتسجل بتاريخ التوريد الأصلي (يوم العملية) — نفس اليوم
+          // التجاري اللي ظهر بيه في الديسكتوب أوفلاين.
+          date: restockDate,
           addedBy: req.user._id,
           clientRestockId: clientRestockId || undefined,
           clientExpenseId: clientRestockId || undefined,
