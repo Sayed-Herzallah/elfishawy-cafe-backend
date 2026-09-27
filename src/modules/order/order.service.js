@@ -1,4 +1,5 @@
 import { orderModel, orderStatuses } from "../../database/model/order.model.js";
+import mongoose from "mongoose";
 import { invoiceCounterModel } from "../../database/model/invoiceCounter.model.js";
 import { productModel } from "../../database/model/product.model.js";
 import { inventoryModel } from "../../database/model/inventory.model.js";
@@ -305,7 +306,7 @@ export const createOrder = async (req, res, next) => {
                   inStock: { $gt: [{ $subtract: ['$stockQuantity', quantity] }, 0] },
                 } },
               ],
-              { new: true, session }
+              { new: true, session, updatePipeline: true }
             );
             if (!updated) throw new Error('Insufficient product stock during order commit', { cause: 400 });
           }
