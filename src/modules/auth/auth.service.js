@@ -4,7 +4,8 @@ import { createToken, verifyToken } from "../../utils/token/token.js";
 
 // =========================== 1) Login ===========================
 export const login = async (req, res, next) => {
-  const { email, password } = req.body;
+  const email = String(req.body.email || "").trim().toLowerCase();
+  const { password } = req.body;
 
   const user = await userModel.findOne({ email });
   if (!user) return next(new Error("Invalid email or password", { cause: 404 }));
