@@ -85,10 +85,14 @@ export const createOrder = async (req, res, next) => {
         quantity: item.quantity,
         price: salePrice,
       });
-      productStockChanges.push({
-        productId: product._id,
-        newQuantity: product.stockQuantity - item.quantity,
-      });
+      const priorProductStock = productStockChanges.find(
+        (stock) => String(stock.productId) === String(product._id)
+      );
+      if (priorProductStock) {
+        priorProductStock.quantity += item.quantity;
+      } else {
+        productStockChanges.push({ productId: product._id, quantity: item.quantity });
+      }
     }
 
     // ===== PHASE 2: Check Recipe-based Inventory availability =====
@@ -258,56 +262,70 @@ export const createOrder = async (req, res, next) => {
 
     let newOrder = null;
     let attempts = 0;
+    const session = await mongoose.startSession();
+    try {
     while (!newOrder && attempts < 5) {
       attempts++;
-      let orderNumber = null;
-
       try {
-        // تخصيص ذري: زوّد العداد وخذ القيمة الجديدة في عملية واحدة
-        const counter = await invoiceCounterModel.findOneAndUpdate(
-          { _id: `invoice_${dayKey}` },
-          { $inc: { seq: 1 } },
-          { upsert: true, new: true, setDefaultsOnInsert: true }
-        );
-        orderNumber = String(counter?.seq || attempts);
-      } catch {
-        // fallback نادر: لو فشل العداد نستخدم أعلى رقم اليوم + المحاولة الحالية
-        const maxNum = await getMaxNumericForDay();
-        orderNumber = String(maxNum + attempts);
-      }
-
-      // حاجز أمان أخير: لو رجع رقم كبير غير منطقي (عداد مسمّم لسه)، نصححه ونطلب
-      // رقم صحيح فوراً بدل حفظ الفاتورة برقم ضخم.
-      if (Number(orderNumber) > MAX_PLAUSIBLE_DAILY_INVOICE) {
-        await healPoisonedCounter();
-        const realMax = await getMaxNumericForDay();
-        orderNumber = String(realMax + 1);
-      }
-
-      try {
-        newOrder = await orderModel.create({
-          orderNumber,
-          dayKey,
-          items: processedItems,
-          totalAmount: calculatedTotal,
-          tableNumber,
-          cashierId,
-          status: orderStatuses.completed,
-          notes: notes || "",
-          clientOrderId: clientOrderId || undefined,
-          // F4: فواتير الأوفلاين تحتفظ بوقت إنشائها الحقيقي (Mongoose يحترم createdAt
-          // الممرر صراحةً مع timestamps:true). الطلبات Online تبقى بدون تغيير.
-          ...(offlineCreatedAt ? { createdAt: offlineCreatedAt } : {}),
-        });
-
-        // مزامنة العداد مع أعلى رقم مستخدم لضمان استمرار التسلسل التصاعدي
-        if (Number(orderNumber) > 0) {
-          await invoiceCounterModel.updateOne(
+        await session.withTransaction(async () => {
+          // Allocate the final number and persist the order and all stock changes
+          // in one Mongo transaction. A failed write rolls back the counter too.
+          const counter = await invoiceCounterModel.findOneAndUpdate(
             { _id: `invoice_${dayKey}` },
-            { $max: { seq: Number(orderNumber) } },
-            { upsert: true }
+            { $inc: { seq: 1 } },
+            { upsert: true, new: true, setDefaultsOnInsert: true, session }
           );
-        }
+          const orderNumber = String(counter?.seq || attempts);
+          if (Number(orderNumber) > MAX_PLAUSIBLE_DAILY_INVOICE) {
+            throw new Error('Daily invoice counter exceeds the configured limit');
+          }
+
+          const [createdOrder] = await orderModel.create([{
+            orderNumber,
+            dayKey,
+            items: processedItems,
+            totalAmount: calculatedTotal,
+            tableNumber,
+            cashierId,
+            status: orderStatuses.completed,
+            notes: notes || "",
+            clientOrderId: clientOrderId || undefined,
+            ...(offlineCreatedAt ? { createdAt: offlineCreatedAt } : {}),
+          }], { session });
+
+          // Use guarded atomic decrements so concurrent distinct sales cannot
+          // overwrite each other's stale stock snapshot.
+          for (const stock of productStockChanges) {
+            const quantity = Number(stock.quantity) || 0;
+            const updated = await productModel.findOneAndUpdate(
+              { _id: stock.productId, stockQuantity: { $gte: quantity } },
+              [
+                { $set: {
+                  stockQuantity: { $subtract: ['$stockQuantity', quantity] },
+                  inStock: { $gt: [{ $subtract: ['$stockQuantity', quantity] }, 0] },
+                } },
+              ],
+              { new: true, session }
+            );
+            if (!updated) throw new Error('Insufficient product stock during order commit', { cause: 400 });
+          }
+
+          for (const ded of inventoryDeductions) {
+            const deduction = baseToUnit(ded.consumptionBase, ded.currentUnit);
+            const filter = { _id: ded.inventoryId };
+            if (ded.isPrimary) filter.quantity = { $gte: deduction };
+            const updated = await inventoryModel.findOneAndUpdate(
+              filter,
+              { $inc: { quantity: -deduction } },
+              { new: true, session }
+            );
+            if (!updated && ded.isPrimary) throw new Error('Insufficient ingredient stock during order commit', { cause: 400 });
+            if (updated && !ded.isPrimary && updated.quantity < 0) {
+              await inventoryModel.updateOne({ _id: ded.inventoryId }, { $set: { quantity: 0 } }, { session });
+            }
+          }
+          newOrder = createdOrder;
+        });
       } catch (err) {
         if (err.code === 11000) {
           // (1) نفس الفاتورة وصلت مرتين (إعادة محاولة بعد انقطاع النت أثناء استلام الرد،
@@ -341,30 +359,11 @@ export const createOrder = async (req, res, next) => {
         throw err;
       }
     }
+    } finally {
+      await session.endSession();
+    }
     if (!newOrder) {
       return next(new Error('فشل توليد رقم فاتورة فريد، يرجى المحاولة مرة أخرى', { cause: 500 }));
-    }
-
-    // ===== PHASE 5: Deduct product.stockQuantity =====
-    for (const stock of productStockChanges) {
-      await productModel.findByIdAndUpdate(stock.productId, {
-        stockQuantity: stock.newQuantity,
-        inStock: stock.newQuantity > 0,
-      });
-    }
-
-    // ===== PHASE 6: Deduct Inventory (Recipe-based) =====
-    for (const ded of inventoryDeductions) {
-      const invItem = await inventoryModel.findById(ded.inventoryId);
-      if (!invItem) continue;
-
-      const currentStockBase = convertToBase(invItem.quantity, invItem.unit);
-      const newStockBase = Math.max(0, currentStockBase - ded.consumptionBase);
-      const newQuantityInUnit = baseToUnit(newStockBase, invItem.unit);
-
-      await inventoryModel.findByIdAndUpdate(ded.inventoryId, {
-        quantity: newQuantityInUnit,
-      });
     }
 
     const orderData = await orderModel.findById(newOrder._id)
@@ -378,7 +377,7 @@ export const createOrder = async (req, res, next) => {
     });
 
   } catch (err) {
-    return next(new Error(`Failed to place order: ${err.message}`, { cause: 500 }));
+    return next(new Error(`Failed to place order: ${err.message}`, { cause: err.cause || 500 }));
   }
 };
 
